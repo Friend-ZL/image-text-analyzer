@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>多模态文档分析 Agent</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .upload-zone {
+            border: 3px dashed #667eea;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9ff;
+            margin-bottom: 20px;
+        }
+        
+        .upload-zone:hover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+        }
+        
+        .upload-zone.dragging {
+            border-color: #764ba2;
+            background: #e8ebff;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        
+        .upload-text {
+            color: #667eea;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+        
+        .upload-hint {
+            color: #999;
+            font-size: 12px;
+        }
+        
+        .preview {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+        
+        .preview img {
+            max-width: 100%;
+            max-height: 300px;
+            border-radius: 4px;
+            margin-top: 10px;
+        }
+        
+        .preview-info {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        
+        .question-section {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 100px;
+            transition: border-color 0.3s;
+        }
+        
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .submit-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .submit-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+            color: #667eea;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .result {
+            display: none;
+            margin-top: 30px;
+            padding: 20px;
+            background: #f0f8ff;
+            border-left: 4px solid #667eea;
+            border-radius: 6px;
+        }
+        
+        .result-title {
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        
+        .result-content {
+            color: #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            margin-bottom: 15px;
+        }
+        
+        .result-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #d0e0ff;
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .meta-label {
+            font-weight: 600;
+        }
+        
+        .error {
+            display: none;
+            margin-top: 20px;
+            padding: 15px;
+            background: #ffe0e0;
+            border-left: 4px solid #ff4444;
+            border-radius: 6px;
+            color: #cc0000;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 多模态文档分析 Agent</h1>
+        <p class="subtitle">支持图片（JPEG、PNG、GIF、WebP）和 PDF 文档分析</p>
+        
+        <div class="upload-zone" id="uploadZone">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">点击或拖拽文件到此处上传</div>
+            <div class="upload-hint">支持 JPG、PNG、GIF、WebP、PDF，最大 10MB</div>
+            <input type="file" id="fileInput" accept="image/*,.pdf">
+        </div>
+        
+        <div class="preview" id="preview">
+            <div class="preview-info" id="previewInfo"></div>
+            <img id="previewImage" alt="预览">
+        </div>
+        
+        <div class="question-section">
+            <label for="question">请输入您的问题：</label>
+            <textarea id="question" placeholder="例如：这张图片的内容是什么？文档中的关键信息有哪些？"></textarea>
+        </div>
+        
+        <button class="submit-btn" id="submitBtn" disabled>开始分析</button>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>AI 正在分析中，请稍候...</div>
+        </div>
+        
+        <div class="error" id="error"></div>
+        
+        <div class="result" id="result">
+            <div class="result-title">📊 分析结果</div>
+            <div class="result-content" id="resultContent"></div>
+            <div class="result-meta" id="resultMeta"></div>
+        </div>
+    </div>
+    
+    <script>
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const preview = document.getElementById('preview');
+        const previewInfo = document.getElementById('previewInfo');
+        const previewImage = document.getElementById('previewImage');
+        const question = document.getElementById('question');
+        const submitBtn = document.getElementById('submitBtn');
+        const loading = document.getElementById('loading');
+        const error = document.getElementById('error');
+        const result = document.getElementById('result');
+        const resultContent = document.getElementById('resultContent');
+        const resultMeta = document.getElementById('resultMeta');
+        
+        let selectedFile = null;
+        
+        // 点击上传区域
+        uploadZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        // 文件选择
+        fileInput.addEventListener('change', (e) => {
+            handleFile(e.target.files[0]);
+        });
+        
+        // 拖拽上传
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragging');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragging');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragging');
+            handleFile(e.dataTransfer.files[0]);
+        });
+        
+        // 处理文件
+        function handleFile(file) {
+            if (!file) return;
+            
+            const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'application/pdf'];
+            if (!validTypes.includes(file.type)) {
+                showError('不支持的文件类型，请上传图片或 PDF 文件');
+                return;
+            }
+            
+            if (file.size > 10 * 1024 * 1024) {
+                showError('文件大小超过 10MB 限制');
+                return;
+            }
+            
+            selectedFile = file;
+            
+            // 显示预览
+            previewInfo.textContent = `文件名：${file.name}  |  大小：${(file.size / 1024).toFixed(2)} KB`;
+            
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    previewImage.src = e.target.result;
+                    previewImage.style.display = 'block';
+                };
+                reader.readAsDataURL(file);
+            } else {
+                previewImage.style.display = 'none';
+            }
+            
+            preview.style.display = 'block';
+            updateSubmitButton();
+            hideError();
+            hideResult();
+        }
+        
+        // 问题输入
+        question.addEventListener('input', updateSubmitButton);
+        
+        function updateSubmitButton() {
+            submitBtn.disabled = !selectedFile || !question.value.trim();
+        }
+        
+        // 提交分析
+        submitBtn.addEventListener('click', async () => {
+            if (!selectedFile || !question.value.trim()) return;
+            
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('question', question.value.trim());
+            
+            try {
+                showLoading();
+                hideError();
+                hideResult();
+                
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.message || '分析失败');
+                }
+                
+                showResult(data);
+            } catch (err) {
+                showError(err.message || '请求失败，请检查网络连接');
+            } finally {
+                hideLoading();
+            }
+        });
+        
+        function showLoading() {
+            loading.style.display = 'block';
+            submitBtn.disabled = true;
+        }
+        
+        function hideLoading() {
+            loading.style.display = 'none';
+            updateSubmitButton();
+        }
+        
+        function showError(message) {
+            error.textContent = message;
+            error.style.display = 'block';
+        }
+        
+        function hideError() {
+            error.style.display = 'none';
+        }
+        
+        function showResult(data) {
+            resultContent.textContent = data.answer;
+            
+            const meta = data.metadata || {};
+            resultMeta.innerHTML = `
+                <div class="meta-item">
+                    <span class="meta-label">模型：</span>
+                    <span>${data.model}</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">耗时：</span>
+                    <span>${data.latencyMs} ms</span>
+                </div>
+                <div class="meta-item">
+                    <span class="meta-label">文件类型：</span>
+                    <span>${meta.fileType === 'pdf' ? 'PDF' : '图片'}</span>
+                </div>
+                ${meta.pageCount ? `
+                <div class="meta-item">
+                    <span class="meta-label">页数：</span>
+                    <span>${meta.pageCount}</span>
+                </div>
+                ` : ''}
+            `;
+            
+            result.style.display = 'block';
+        }
+        
+        function hideResult() {
+            result.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
