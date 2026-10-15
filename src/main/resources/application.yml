@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: image-text-analyzer
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+      enabled: true
+  ai:
+    openai:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${DASHSCOPE_API_KEY:dummy-key-for-test}
+      chat:
+        options:
+          model: qwen-vl-max
+          temperature: 0.7
+
+app:
+  analysis:
+    max-pdf-pages: 10
+    max-file-size-mb: 10
+    supported-image-types: image/jpeg,image/png,image/gif,image/webp,image/jpg
+    supported-file-types: image/jpeg,image/png,image/gif,image/webp,image/jpg,application/pdf
+    pdf-render-dpi: 150
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.portfolio.analyzer: INFO
+    org.springframework.ai: DEBUG

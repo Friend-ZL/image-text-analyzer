@@ -1,0 +1,10 @@
+spring:
+  ai:
+    openai:
+      api-key: test-api-key
+      base-url: http://localhost:8888
+
+app:
+  analysis:
+    max-pdf-pages: 5
+    max-file-size-mb: 5
