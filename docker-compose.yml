@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: image-text-analyzer-pgvector
+    environment:
+      POSTGRES_DB: analyzer_db
+      POSTGRES_USER: analyzer
+      POSTGRES_PASSWORD: analyzer_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analyzer -d analyzer_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - analyzer_network
+
+volumes:
+  pgvector_data:
+
+networks:
+  analyzer_network:
+    driver: bridge
