@@ -68,6 +68,36 @@ public class MultimodalAIClient {
         }
     }
     
+    /**
+     * 纯文本聊天（用于RAG场景）
+     * 
+     * @param prompt 完整的提示词（包含检索到的上下文）
+     * @return AI的回答
+     */
+    public String chat(String prompt) {
+        if (prompt == null || prompt.trim().isEmpty()) {
+            throw new IllegalArgumentException("提示词不能为空");
+        }
+        
+        logger.info("Sending chat request (prompt length: {})", prompt.length());
+        
+        try {
+            String response = chatClient.prompt()
+                .user(prompt)
+                .call()
+                .content();
+            
+            logger.info("Received chat response (length: {})", 
+                response != null ? response.length() : 0);
+            
+            return response;
+            
+        } catch (Exception e) {
+            logger.error("Failed to chat with AI model", e);
+            throw new AIServiceException("AI模型调用失败: " + e.getMessage(), e);
+        }
+    }
+    
     public String getModelName() {
         return modelName;
     }

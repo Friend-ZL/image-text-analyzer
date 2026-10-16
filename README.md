@@ -6,8 +6,8 @@
 
 本项目分四个阶段迭代开发：
 
-- **Stage 1（当前阶段）**：基础多模态分析 - 图片/PDF 上传 + 视觉语言模型问答
-- **Stage 2**：多模态 RAG - 集成 pgvector 向量数据库，实现文档检索增强生成
+- **Stage 1（已完成）**：基础多模态分析 - 图片/PDF 上传 + 视觉语言模型问答
+- **Stage 2（当前阶段）**：多模态 RAG - 集成 pgvector 向量数据库，实现文档检索增强生成
 - **Stage 3**：Agent 工具调用 - 集成 OCR、表格提取、计算器、图表生成等工具
 - **Stage 4**：评估与优化 - 准确率测试、性能优化、监控告警、容器化部署
 
@@ -20,6 +20,15 @@
 - ✅ 拖拽式上传的现代化前端界面
 - ✅ 完整的错误处理和参数验证
 - ✅ 单元测试和集成测试覆盖
+
+## ✨ Stage 2 功能特性（新增）
+
+- ✅ 集成 PostgreSQL + pgvector 向量数据库
+- ✅ 文档智能切块和向量化存储
+- ✅ RAG（检索增强生成）问答，带引用来源
+- ✅ 基于相似度阈值的智能检索过滤
+- ✅ Docker Compose 一键启动数据库环境
+- ✅ 保持 Stage 1 的 `/api/analyze` 功能完整可用
 
 ## 🏗 系统架构
 
@@ -69,7 +78,11 @@ graph TB
 | 语言 | Java | 17+ | 开发语言 |
 | AI 集成 | Spring AI | 1.0.0-M3 | AI 模型调用抽象层 |
 | LLM 服务 | 阿里云百炼 | qwen-vl-max | 视觉语言模型 |
+| Embedding | 阿里云百炼 | text-embedding-v3 | 文本向量化（Stage 2） |
+| 向量数据库 | PostgreSQL + pgvector | pg16 | 向量存储和检索（Stage 2） |
+| ORM | Spring Data JPA | - | 数据库操作（Stage 2） |
 | PDF 处理 | Apache PDFBox | 3.0.1 | PDF 渲染 |
+| 容器化 | Docker Compose | - | 本地数据库环境（Stage 2） |
 | 构建工具 | Maven | 3.9+ | 项目构建 |
 | 测试框架 | JUnit 5 + Mockito | - | 单元/集成测试 |
 
@@ -79,6 +92,7 @@ graph TB
 
 - Java 17 或更高版本
 - Maven 3.6 或更高版本
+- Docker 和 Docker Compose（用于 Stage 2 的 pgvector 数据库）
 - 阿里云 DashScope API Key（[获取地址](https://dashscope.aliyun.com/)）
 
 ### 1. 克隆项目
@@ -88,7 +102,19 @@ git clone <repository-url>
 cd image-text-analyzer
 ```
 
-### 2. 配置 API Key
+### 2. 启动 pgvector 数据库（Stage 2 必需）
+
+```bash
+docker compose up -d
+```
+
+等待数据库启动完成（约 10 秒），可以通过以下命令检查状态：
+
+```bash
+docker compose ps
+```
+
+### 3. 配置 API Key
 
 **方式一：环境变量（推荐）**
 
@@ -102,7 +128,7 @@ export DASHSCOPE_API_KEY="your-api-key-here"
 mvn spring-boot:run -DDASHSCOPE_API_KEY="your-api-key-here"
 ```
 
-### 3. 启动应用
+### 4. 启动应用
 
 ```bash
 mvn spring-boot:run
@@ -110,7 +136,7 @@ mvn spring-boot:run
 
 应用将在 `http://localhost:8080` 启动。
 
-### 4. 访问界面
+### 5. 访问界面
 
 在浏览器中打开：http://localhost:8080
 
@@ -145,6 +171,62 @@ curl -X POST http://localhost:8080/api/analyze \
     "fileSize": 245632,
     "contentType": "image/jpeg"
   }
+}
+```
+
+## 📖 Stage 2 API 使用示例
+
+### 入库文档（RAG）
+
+将文档内容切块并存入向量数据库：
+
+```bash
+curl -X POST http://localhost:8080/api/rag/ingest \
+  -F "file=@knowledge.txt" \
+  -F "source=knowledge-base"
+```
+
+响应示例：
+
+```json
+{
+  "message": "文档入库成功",
+  "chunksProcessed": 15,
+  "processingTimeMs": 1250
+}
+```
+
+### RAG 检索增强问答
+
+基于已入库的文档进行智能问答，返回答案和引用来源：
+
+```bash
+curl -X POST http://localhost:8080/api/rag/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Spring AI 是什么？",
+    "conversationId": null
+  }'
+```
+
+响应示例：
+
+```json
+{
+  "answer": "Spring AI 是一个用于构建 AI 应用的框架，它提供了统一的抽象层...",
+  "sources": [
+    {
+      "content": "Spring AI 是一个强大的框架...",
+      "source": "knowledge-base",
+      "similarity": 0.92,
+      "metadata": {
+        "fileName": "knowledge.txt",
+        "contentType": "text/plain"
+      }
+    }
+  ],
+  "model": "qwen-vl-max",
+  "latencyMs": 856
 }
 ```
 
@@ -229,16 +311,24 @@ image-text-analyzer/
 │   │   ├── java/com/portfolio/analyzer/
 │   │   │   ├── AnalyzerApplication.java          # 启动类
 │   │   │   ├── config/
-│   │   │   │   └── AIConfig.java                # AI 配置
+│   │   │   │   ├── AIConfig.java                # AI 配置
+│   │   │   │   └── RagConfig.java               # RAG 配置（Stage 2）
 │   │   │   ├── controller/
-│   │   │   │   └── AnalysisController.java      # API 控制器
+│   │   │   │   ├── AnalysisController.java      # 分析 API 控制器
+│   │   │   │   └── RagController.java           # RAG API 控制器（Stage 2）
 │   │   │   ├── service/
 │   │   │   │   ├── DocumentAnalysisService.java # 文档分析服务
-│   │   │   │   └── ImageProcessingService.java  # 图片处理服务
+│   │   │   │   ├── ImageProcessingService.java  # 图片处理服务
+│   │   │   │   ├── DocumentIngestionService.java # 文档入库服务（Stage 2）
+│   │   │   │   └── RagQueryService.java         # RAG 查询服务（Stage 2）
 │   │   │   ├── ai/
 │   │   │   │   └── MultimodalAIClient.java      # AI 客户端封装
 │   │   │   ├── dto/
-│   │   │   │   └── AnalysisResponse.java        # 响应 DTO
+│   │   │   │   ├── AnalysisResponse.java        # 分析响应 DTO
+│   │   │   │   ├── IngestRequest.java           # 入库请求 DTO（Stage 2）
+│   │   │   │   ├── IngestResponse.java          # 入库响应 DTO（Stage 2）
+│   │   │   │   ├── RagQueryRequest.java         # RAG 查询请求 DTO（Stage 2）
+│   │   │   │   └── RagQueryResponse.java        # RAG 查询响应 DTO（Stage 2）
 │   │   │   └── exception/
 │   │   │       ├── GlobalExceptionHandler.java  # 全局异常处理
 │   │   │       ├── InvalidFileTypeException.java
@@ -252,15 +342,19 @@ image-text-analyzer/
 │       ├── java/com/portfolio/analyzer/
 │       │   ├── service/
 │       │   │   ├── ImageProcessingServiceTest.java
-│       │   │   └── DocumentAnalysisServiceTest.java
+│       │   │   ├── DocumentAnalysisServiceTest.java
+│       │   │   ├── DocumentIngestionServiceTest.java # 入库服务测试（Stage 2）
+│       │   │   └── RagQueryServiceTest.java     # RAG 查询测试（Stage 2）
 │       │   ├── ai/
 │       │   │   └── MultimodalAIClientTest.java
 │       │   ├── controller/
-│       │   │   └── AnalysisControllerTest.java
+│       │   │   ├── AnalysisControllerTest.java
+│       │   │   └── RagControllerTest.java       # RAG 控制器测试（Stage 2）
 │       │   └── TestDataGenerator.java           # 测试数据生成器
 │       └── resources/
 │           ├── test-data/                        # 测试数据
 │           └── application-test.yml              # 测试配置
+├── docker-compose.yml                            # pgvector 数据库（Stage 2）
 ├── pom.xml
 ├── .gitignore
 ├── README.md
@@ -269,17 +363,20 @@ image-text-analyzer/
 
 ## 🗺 开发路线图
 
-### Stage 2: 多模态 RAG（计划中）
+### Stage 2: 多模态 RAG（已完成）
 
-- [ ] 集成 PostgreSQL + pgvector 向量数据库
-- [ ] 实现文档分块和向量化（文本 + 图片）
-- [ ] 构建检索增强生成（RAG）流程
-- [ ] 添加历史对话管理
+- ✅ 集成 PostgreSQL + pgvector 向量数据库
+- ✅ 实现文档分块和向量化（文本）
+- ✅ 构建检索增强生成（RAG）流程
+- ✅ 基于相似度阈值的智能检索
+- ✅ Docker Compose 本地数据库环境
+- ✅ 完整的单元测试和集成测试
 
 **技术要点**：
-- 使用 Spring Data JPA + pgvector 扩展
-- 文本和图片混合向量检索
-- 相关性排序和重排序（Reranking）
+- 使用 Spring AI PgVectorStore 进行向量存储
+- TokenTextSplitter 实现智能文档切块
+- 相似度计算和阈值过滤
+- 保持 Stage 1 功能完全兼容
 
 ### Stage 3: Agent 工具调用（计划中）
 
@@ -325,14 +422,31 @@ spring:
       api-key: ${DASHSCOPE_API_KEY}                                # API Key
       chat:
         options:
-          model: qwen-vl-max                                       # 模型名称
+          model: qwen-vl-max                                       # 聊天模型
           temperature: 0.7                                         # 温度参数
+      embedding:
+        options:
+          model: text-embedding-v3                                 # Embedding 模型（Stage 2）
+    vectorstore:
+      pgvector:
+        index-type: HNSW                                           # 索引类型（Stage 2）
+        distance-type: COSINE_DISTANCE                             # 距离度量（Stage 2）
+        dimensions: 1536                                           # 向量维度（Stage 2）
+  datasource:
+    url: jdbc:postgresql://localhost:5432/analyzer_db              # 数据库连接（Stage 2）
+    username: analyzer                                             # 数据库用户名（Stage 2）
+    password: analyzer_pass                                        # 数据库密码（Stage 2）
 
 app:
   analysis:
     max-pdf-pages: 10           # PDF 最大页数
     max-file-size-mb: 10        # 文件最大大小（MB）
     pdf-render-dpi: 150         # PDF 渲染 DPI
+  rag:
+    chunk-size: 500             # 文档切块大小（Stage 2）
+    chunk-overlap: 50           # 切块重叠大小（Stage 2）
+    top-k: 3                    # 检索返回数量（Stage 2）
+    similarity-threshold: 0.7   # 相似度阈值（Stage 2）
 ```
 
 ### 切换到 OpenAI GPT-4o
