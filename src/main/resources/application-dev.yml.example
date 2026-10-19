@@ -1,0 +1,27 @@
+# 开发环境配置示例
+# 复制此文件为 src/main/resources/application-dev.yml 并根据需要修改
+
+spring:
+  profiles:
+    active: dev
+  
+  # 数据源配置（可选，开发环境可不启动数据库）
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_dev}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+  
+  # Flyway - 开发环境启用
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+  
+  # JPA
+  jpa:
+    show-sql: true
+
+# 开发环境不需要 JWT 配置（使用 DevTenantContext 从请求头读取）
+
+logging:
+  level:
+    com.portfolio.analyzer: DEBUG
+    org.springframework.security: DEBUG

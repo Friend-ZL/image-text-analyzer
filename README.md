@@ -83,6 +83,7 @@ graph TB
 
 - Java 17 或更高版本
 - Maven 3.6 或更高版本
+- PostgreSQL 13+ 或使用内存数据库（测试环境）
 - 阿里云 DashScope API Key（[获取地址](https://dashscope.aliyun.com/)）
 
 ### 1. 克隆项目
@@ -92,21 +93,51 @@ git clone <repository-url>
 cd image-text-analyzer
 ```
 
-### 2. 配置 API Key
+### 2. 配置环境变量
 
-**方式一：环境变量（推荐）**
+**生产环境（必需）**
+
+```bash
+# AI 服务
+export DASHSCOPE_API_KEY="your-api-key-here"
+
+# 数据库
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer"
+export DATABASE_USERNAME="analyzer"
+export DATABASE_PASSWORD="your-password"
+
+# JWT 认证（从 Keycloak 或其他 OIDC Provider 获取）
+export JWT_ISSUER_URI="https://your-keycloak.com/realms/your-realm"
+export JWT_JWK_SET_URI="https://your-keycloak.com/realms/your-realm/protocol/openid-connect/certs"
+```
+
+**开发环境（可选）**
+
+开发环境使用 `dev` profile，通过请求头传递身份信息（不需要 JWT）：
 
 ```bash
 export DASHSCOPE_API_KEY="your-api-key-here"
+export SPRING_PROFILES_ACTIVE="dev"
+
+# 可选：配置数据库（不配置则需禁用 Flyway）
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_dev"
+export FLYWAY_ENABLED="false"
 ```
 
-**方式二：系统属性**
+复制 `src/main/resources/application-dev.yml.example` 为 `application-dev.yml` 并根据需要修改。
+
+### 3. 初始化数据库（生产环境）
 
 ```bash
-mvn spring-boot:run -DDASHSCOPE_API_KEY="your-api-key-here"
+# 创建数据库
+psql -U postgres -c "CREATE DATABASE analyzer;"
+psql -U postgres -c "CREATE USER analyzer WITH PASSWORD 'your-password';"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE analyzer TO analyzer;"
+
+# Flyway 会在应用启动时自动运行迁移
 ```
 
-### 3. 启动应用
+### 4. 启动应用
 
 ```bash
 mvn spring-boot:run
@@ -114,9 +145,29 @@ mvn spring-boot:run
 
 应用将在 `http://localhost:8080` 启动。
 
-### 4. 访问界面
+### 5. 访问和测试
 
-在浏览器中打开：http://localhost:8080
+**生产环境**：需要在请求头中携带 JWT token
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "file=@example.jpg" \
+  -F "question=这张图片的内容是什么？"
+```
+
+**开发环境**：通过请求头传递身份信息
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: admin,user" \
+  -F "file=@example.jpg" \
+  -F "question=这张图片的内容是什么？"
+```
+
+浏览器访问：http://localhost:8080
 
 ## 📖 API 接口规范
 
@@ -235,6 +286,9 @@ Link: </api/v1/analyze>; rel="successor-version"
 | E40001 | 400 | 参数校验失败 | 必填参数缺失、格式不正确 |
 | E40002 | 400 | 文件不能为空 | 未上传文件或文件为空 |
 | E40003 | 400 | 问题不能为空 | question 参数为空或空白字符串 |
+| E40101 | 401 | 未认证或令牌无效 | 缺少 JWT token 或 token 无效/过期 |
+| E40102 | 401 | 租户信息缺失 | JWT token 中缺少 tenant_id claim |
+| E40301 | 403 | 无权限访问 | 用户已认证但无访问权限 |
 | E40401 | 404 | 请求的资源不存在 | 访问不存在的端点 |
 | E40501 | 405 | 不支持的请求方法 | 使用了不支持的 HTTP 方法（响应包含 `Allow` 头） |
 | E41301 | 413 | 文件大小超过限制 | 文件大小超过配置的上限 |
@@ -548,21 +602,86 @@ image-text-analyzer/
 
 ```yaml
 spring:
+  # 数据源配置
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+  
+  # JPA 配置（由 Flyway 管理 schema）
+  jpa:
+    hibernate:
+      ddl-auto: none
+  
+  # Flyway 数据库迁移
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  
+  # Spring AI
   ai:
     openai:
-      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # API 端点
-      api-key: ${DASHSCOPE_API_KEY}                                # API Key
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${DASHSCOPE_API_KEY}
       chat:
         options:
-          model: qwen-vl-max                                       # 模型名称
-          temperature: 0.7                                         # 温度参数
+          model: qwen-vl-max
+          temperature: 0.7
+  
+  # OAuth2 Resource Server（生产环境必需）
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI:}
+          jwk-set-uri: ${JWT_JWK_SET_URI:}
 
 app:
   analysis:
-    max-pdf-pages: 10           # PDF 最大页数
-    max-file-size-mb: 10        # 文件最大大小（MB）
-    pdf-render-dpi: 150         # PDF 渲染 DPI
+    max-pdf-pages: 10
+    max-file-size-mb: 10
+    pdf-render-dpi: 150
+  
+  # JWT Claim 映射
+  security:
+    jwt:
+      claims:
+        tenant-id: tenant_id              # 租户 ID claim 名称
+        roles:                             # 角色 claim 名称列表
+          - realm_access.roles             # Keycloak realm 角色
+          - roles                          # 标准 roles claim
+        groups:                            # 用户组 claim 名称列表
+          - groups
 ```
+
+### 鉴权配置说明
+
+#### 生产环境（JWT 认证）
+
+必须配置以下环境变量：
+
+- `JWT_ISSUER_URI`：JWT 签发者 URI（如 Keycloak realm URL）
+- `JWT_JWK_SET_URI`：JWK Set URI（用于验证 JWT 签名）
+
+JWT token 必须包含以下 claims：
+
+- `sub`：用户 ID
+- `tenant_id`（可配置）：租户 ID，**必填**
+- `roles` 或 `realm_access.roles`（可配置）：用户角色列表
+- `groups`（可配置）：用户组列表
+
+#### 开发环境（Header 认证）
+
+⚠️ **警告**：`dev` profile 不安全，仅用于开发测试！
+
+使用 `spring.profiles.active=dev` 激活开发模式，通过以下请求头传递身份信息：
+
+- `X-Tenant-Id`：租户 ID（必填）
+- `X-User-Id`：用户 ID（必填）
+- `X-Roles`：角色列表（逗号分隔，可选）
+- `X-Groups`：用户组列表（逗号分隔，可选）
+
+生产环境严禁使用 `dev` profile。
 
 ### 切换到 OpenAI GPT-4o
 

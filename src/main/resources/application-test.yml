@@ -3,6 +3,24 @@ spring:
     openai:
       api-key: test-api-key
       base-url: http://localhost:8888
+  
+  # 测试环境禁用 Flyway（由测试代码控制）
+  flyway:
+    enabled: false
+  
+  # 测试环境使用内存数据库
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
 
 app:
   analysis:
