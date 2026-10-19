@@ -81,8 +81,8 @@ public class JwtTenantContext implements TenantContext {
     private Set<String> extractRoles(Jwt jwt) {
         Set<String> roles = new HashSet<>();
         
-        for (String claimName : claimProperties.getRoles()) {
-            Set<String> claimRoles = extractStringSet(jwt, claimName);
+        for (String claimPath : claimProperties.getRoles()) {
+            Set<String> claimRoles = extractStringSetFromPath(jwt, claimPath);
             roles.addAll(claimRoles);
         }
         
@@ -92,31 +92,59 @@ public class JwtTenantContext implements TenantContext {
     private Set<String> extractGroups(Jwt jwt) {
         Set<String> groups = new HashSet<>();
         
-        for (String claimName : claimProperties.getGroups()) {
-            Set<String> claimGroups = extractStringSet(jwt, claimName);
+        for (String claimPath : claimProperties.getGroups()) {
+            Set<String> claimGroups = extractStringSetFromPath(jwt, claimPath);
             groups.addAll(claimGroups);
         }
         
         return groups;
     }
     
+    /**
+     * 从 claim 路径提取字符串集合
+     * 支持嵌套路径，如 "realm_access.roles"
+     */
     @SuppressWarnings("unchecked")
-    private Set<String> extractStringSet(Jwt jwt, String claimName) {
-        Object claim = jwt.getClaim(claimName);
-        
-        if (claim == null) {
+    private Set<String> extractStringSetFromPath(Jwt jwt, String claimPath) {
+        if (claimPath == null || claimPath.isEmpty()) {
             return Set.of();
         }
         
-        if (claim instanceof Collection) {
-            return ((Collection<?>) claim).stream()
+        // 处理嵌套路径，如 "realm_access.roles"
+        String[] parts = claimPath.split("\\.");
+        Object value = jwt.getClaims();
+        
+        for (String part : parts) {
+            if (value instanceof Map) {
+                value = ((Map<String, ?>) value).get(part);
+            } else {
+                return Set.of();
+            }
+            
+            if (value == null) {
+                return Set.of();
+            }
+        }
+        
+        // 转换为字符串集合
+        return toStringSet(value);
+    }
+    
+    @SuppressWarnings("unchecked")
+    private Set<String> toStringSet(Object value) {
+        if (value == null) {
+            return Set.of();
+        }
+        
+        if (value instanceof Collection) {
+            return ((Collection<?>) value).stream()
                     .filter(Objects::nonNull)
                     .map(Object::toString)
                     .collect(Collectors.toSet());
         }
         
-        if (claim instanceof String) {
-            return Set.of((String) claim);
+        if (value instanceof String) {
+            return Set.of((String) value);
         }
         
         return Set.of();

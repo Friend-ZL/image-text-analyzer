@@ -50,7 +50,6 @@ public class GlobalExceptionHandler {
     }
     
     /**
-<<<<<<< HEAD
      * 处理租户信息缺失异常
      */
     @ExceptionHandler(TenantMissingException.class)
@@ -60,8 +59,6 @@ public class GlobalExceptionHandler {
     }
     
     /**
-=======
->>>>>>> origin/main
      * 处理不支持的文件类型
      */
     @ExceptionHandler(InvalidFileTypeException.class)
