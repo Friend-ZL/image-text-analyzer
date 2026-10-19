@@ -36,6 +36,7 @@ public class TraceIdFilter implements Filter {
     private static final String X_REQUEST_ID_HEADER = "X-Request-Id";
     private static final String TRACE_ID_RESPONSE_HEADER = "X-Trace-Id";
     private static final String TRACE_ID_MDC_KEY = "traceId";
+    private static final String REQUEST_ID_MDC_KEY = "requestId";
     
     private static final int MAX_REQUEST_ID_LENGTH = 64;
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -47,10 +48,15 @@ public class TraceIdFilter implements Filter {
         HttpServletRequest httpRequest = (HttpServletRequest) request;
         HttpServletResponse httpResponse = (HttpServletResponse) response;
         
-        String traceId = extractTraceId(httpRequest);
+        TraceContext context = extractTraceContext(httpRequest);
         
-        MDC.put(TRACE_ID_MDC_KEY, traceId);
-        httpResponse.setHeader(TRACE_ID_RESPONSE_HEADER, traceId);
+        MDC.put(TRACE_ID_MDC_KEY, context.traceId);
+        httpResponse.setHeader(TRACE_ID_RESPONSE_HEADER, context.traceId);
+        
+        if (context.requestId != null) {
+            MDC.put(REQUEST_ID_MDC_KEY, context.requestId);
+            httpResponse.setHeader(X_REQUEST_ID_HEADER, context.requestId);
+        }
         
         try {
             logger.info("Request: {} {} from {}", 
@@ -67,33 +73,51 @@ public class TraceIdFilter implements Filter {
                 duration);
         } finally {
             MDC.remove(TRACE_ID_MDC_KEY);
+            MDC.remove(REQUEST_ID_MDC_KEY);
+        }
+    }
+    
+    private static class TraceContext {
+        final String traceId;
+        final String requestId;
+        
+        TraceContext(String traceId, String requestId) {
+            this.traceId = traceId;
+            this.requestId = requestId;
         }
     }
     
     /**
-     * 按优先级提取 traceId
+     * 按优先级提取 traceId 和 requestId
      * 1. W3C traceparent 头中的 trace-id
-     * 2. X-Request-Id 头
+     * 2. X-Request-Id 头（如果本身是 32 位 hex 或 UUID，直接用作 traceId；否则生成新 traceId）
      * 3. 新生成
      */
-    private String extractTraceId(HttpServletRequest request) {
+    private TraceContext extractTraceContext(HttpServletRequest request) {
         // 优先级 1: W3C traceparent
         String traceparent = request.getHeader(TRACEPARENT_HEADER);
         if (traceparent != null) {
             String traceId = extractTraceIdFromTraceparent(traceparent);
             if (traceId != null) {
-                return traceId;
+                return new TraceContext(traceId, null);
             }
         }
         
         // 优先级 2: X-Request-Id
         String requestId = request.getHeader(X_REQUEST_ID_HEADER);
         if (isValidRequestId(requestId)) {
-            return normalizeToHex32(requestId);
+            String hex32 = tryExtractHex32(requestId);
+            if (hex32 != null && !isAllZeros(hex32)) {
+                // X-Request-Id 本身是有效的 32 位 hex，直接用作 traceId
+                return new TraceContext(hex32, requestId);
+            } else {
+                // X-Request-Id 不是 32 位 hex，生成新 traceId，保留原始 requestId
+                return new TraceContext(generateTraceId(), requestId);
+            }
         }
         
         // 优先级 3: 新生成
-        return generateTraceId();
+        return new TraceContext(generateTraceId(), null);
     }
     
     /**
@@ -160,27 +184,25 @@ public class TraceIdFilter implements Filter {
     }
     
     /**
-     * 将 requestId 标准化为 32 位小写 hex
-     * 如果本身就是 32 位 hex，直接使用；否则截断或填充
+     * 尝试从 X-Request-Id 提取 32 位 hex
+     * - 如果是 UUID 格式，去连字符后检查
+     * - 如果本身是 32 位 hex，直接返回
+     * - 其他返回 null（不截断、不填充，避免碰撞）
      */
-    private String normalizeToHex32(String requestId) {
-        // 移除连字符和下划线
-        String normalized = requestId.toLowerCase().replaceAll("[\\-_]", "");
+    private String tryExtractHex32(String requestId) {
+        if (requestId == null || requestId.isEmpty()) {
+            return null;
+        }
         
-        // 如果是 32 位 hex，直接返回
+        // 移除连字符（支持 UUID 格式）
+        String normalized = requestId.toLowerCase().replaceAll("-", "");
+        
+        // 只接受严格的 32 位 hex
         if (isValidHex32(normalized)) {
             return normalized;
         }
         
-        // 否则，只保留 hex 字符并调整到 32 位
-        normalized = normalized.replaceAll("[^0-9a-f]", "");
-        
-        if (normalized.length() >= 32) {
-            return normalized.substring(0, 32);
-        } else {
-            // 不足 32 位，后面补 0
-            return String.format("%-32s", normalized).replace(' ', '0');
-        }
+        return null;
     }
     
     /**

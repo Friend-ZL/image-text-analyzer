@@ -19,6 +19,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -94,8 +95,8 @@ public class GlobalExceptionHandler {
             return buildErrorResponse(ErrorCode.MODEL_TIMEOUT, ErrorCode.MODEL_TIMEOUT.getMessage());
         }
         
-        // 不透传上游错误原文，只返回固定文案
-        return buildErrorResponse(ErrorCode.AI_SERVICE_ERROR, ErrorCode.AI_SERVICE_ERROR.getMessage());
+        // 不透传上游错误原文，上游模型错误统一返回 502 / E50201
+        return buildErrorResponse(ErrorCode.MODEL_ERROR, ErrorCode.MODEL_ERROR.getMessage());
     }
     
     /**
@@ -164,6 +165,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
     public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex) {
         logger.error("Media type not supported: {}", ex.getContentType());
+        return buildErrorResponse(ErrorCode.UNSUPPORTED_FILE_TYPE, ErrorCode.UNSUPPORTED_FILE_TYPE.getMessage());
+    }
+    
+    /**
+     * 处理非 multipart 请求（415）
+     */
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMultipartException(MultipartException ex) {
+        logger.error("Multipart request error: {}", ex.getMessage());
         return buildErrorResponse(ErrorCode.UNSUPPORTED_FILE_TYPE, ErrorCode.UNSUPPORTED_FILE_TYPE.getMessage());
     }
     

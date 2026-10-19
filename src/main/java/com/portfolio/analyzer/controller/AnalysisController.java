@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -35,7 +36,7 @@ public class AnalysisController {
      * @param question 用户问题
      * @return 统一响应体包装的分析结果
      */
-    @PostMapping("/v1/analyze")
+    @PostMapping(value = "/v1/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<AnalysisResponse>> analyzeV1(
             @RequestParam("file") MultipartFile file,
             @RequestParam("question") String question) {
@@ -61,7 +62,7 @@ public class AnalysisController {
      * @return 统一响应体包装的分析结果
      */
     @Deprecated
-    @PostMapping("/analyze")
+    @PostMapping(value = "/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<AnalysisResponse>> analyze(
             @RequestParam("file") MultipartFile file,
             @RequestParam("question") String question) {

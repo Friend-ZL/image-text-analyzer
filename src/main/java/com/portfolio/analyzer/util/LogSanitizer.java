@@ -48,10 +48,8 @@ public class LogSanitizer {
             byte[] content = file.getBytes();
             hashPrefix = computeHashPrefix(content);
         } catch (Exception e) {
-            // 如果获取内容失败，使用文件名计算哈希
-            if (filename != null) {
-                hashPrefix = computeHashPrefix(filename.getBytes(StandardCharsets.UTF_8));
-            }
+            // 如果获取内容失败，不计算哈希，直接输出 [error]
+            hashPrefix = "[error]";
         }
         
         return String.format("[ext=%s, size=%d, hash=%s]", extension, size, hashPrefix);
@@ -66,11 +64,29 @@ public class LogSanitizer {
      */
     public static String sanitizeFilename(String filename, String contentType) {
         String extension = getFileExtension(filename);
-        return String.format("[ext=%s, type=%s]", extension, contentType);
+        String sanitizedType = sanitizeContentType(contentType);
+        return String.format("[ext=%s, type=%s]", extension, sanitizedType);
     }
     
     /**
-     * 获取文件扩展名
+     * 脱敏 Content-Type（白名单）
+     * 白名单：1-100 位字母数字和常见分隔符
+     */
+    public static String sanitizeContentType(String contentType) {
+        if (contentType == null || contentType.isEmpty()) {
+            return "[unknown]";
+        }
+        
+        // 白名单验证：字母数字加 . + - /
+        if (contentType.matches("^[A-Za-z0-9.+/\\-]{1,100}$")) {
+            return contentType;
+        }
+        return "[other]";
+    }
+    
+    /**
+     * 获取文件扩展名（白名单）
+     * 白名单：1-10 位字母数字的扩展名
      */
     private static String getFileExtension(String filename) {
         if (filename == null || filename.isEmpty()) {
@@ -79,7 +95,12 @@ public class LogSanitizer {
         
         int lastDot = filename.lastIndexOf('.');
         if (lastDot > 0 && lastDot < filename.length() - 1) {
-            return filename.substring(lastDot);
+            String ext = filename.substring(lastDot);
+            // 白名单验证：. + 1-10 位字母数字
+            if (ext.matches("^\\.[A-Za-z0-9]{1,10}$")) {
+                return ext;
+            }
+            return "[other]";
         }
         return "[none]";
     }
