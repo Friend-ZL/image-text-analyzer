@@ -114,6 +114,88 @@ mvn spring-boot:run
 
 在浏览器中打开：http://localhost:8080
 
+## 🐳 Docker 本地开发
+
+### 使用 Docker Compose 快速启动
+
+如果你更喜欢使用 Docker 进行本地开发，可以使用 docker-compose 一键启动所有服务（包括 PostgreSQL、Redis、MinIO、Keycloak）。
+
+#### 1. 复制环境变量模板
+
+```bash
+cp .env.example .env
+```
+
+#### 2. 编辑 .env 文件
+
+打开 `.env` 文件，至少需要设置：
+- `DASHSCOPE_API_KEY`：你的阿里云 DashScope API Key（必填）
+- 其他密码可以保持默认值（仅用于本地开发）
+
+#### 3. 启动所有服务
+
+```bash
+docker compose up -d
+```
+
+首次启动会构建应用镜像，可能需要几分钟时间。
+
+#### 4. 查看服务状态
+
+```bash
+docker compose ps
+```
+
+所有服务应该显示为 `healthy` 状态。
+
+#### 5. 访问应用
+
+- **应用界面**: http://localhost:8080
+- **MinIO Console**: http://localhost:9001（用户名/密码见 `.env`）
+- **Keycloak Admin**: http://localhost:8180（用户名/密码见 `.env`）
+
+#### 6. 查看日志
+
+```bash
+# 查看应用日志
+docker compose logs -f app
+
+# 查看所有服务日志
+docker compose logs -f
+```
+
+#### 7. 停止服务
+
+```bash
+docker compose down
+```
+
+### 仅启动依赖服务（便于 IDE 调试）
+
+如果你想在 IDE 中调试应用，可以只启动依赖服务：
+
+```bash
+# 只启动 PostgreSQL、Redis、MinIO、Keycloak
+docker compose up -d postgres redis minio keycloak
+
+# 在 IDE 中启动 Spring Boot 应用
+mvn spring-boot:run
+```
+
+这样可以方便地在 IDE 中设置断点和调试代码。
+
+### Docker 服务说明
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| 应用 | 8080 | Spring Boot 应用 |
+| PostgreSQL | 5432 | 数据库（带 pgvector 扩展，为 Stage 2 准备） |
+| Redis | 6379 | 缓存服务（为 Stage 4 准备） |
+| MinIO | 9000, 9001 | 对象存储（为未来文件存储准备） |
+| Keycloak | 8180 | 身份认证服务（为未来权限管理准备） |
+
+**注意**：所有端口都绑定到 `127.0.0.1`，仅本地访问，不会暴露到外网。
+
 ## 📖 API 使用示例
 
 ### 分析图片
