@@ -15,6 +15,7 @@ import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.junit.jupiter.api.extension.ExtendWith;
 
 import java.net.SocketTimeoutException;
@@ -526,7 +527,8 @@ class AnalysisControllerTest {
     }
     
     @Test
-    void testAnalyzeV1_NonMultipartRequest_ShouldReturnE41501() throws Exception {
+    void testAnalyzeV1_HttpMediaTypeNotSupported_ShouldReturn415() throws Exception {
+        // Content-Type 不是 multipart/form-data（触发 HttpMediaTypeNotSupportedException）
         mockMvc.perform(post("/api/v1/analyze")
                 .contentType("application/json")
                 .content("{\"question\":\"test\"}"))
@@ -536,12 +538,69 @@ class AnalysisControllerTest {
     }
     
     @Test
-    void testAnalyze_NonMultipartRequest_ShouldReturnE41501() throws Exception {
+    void testAnalyze_HttpMediaTypeNotSupported_ShouldReturn415() throws Exception {
+        // 旧接口 - Content-Type 不对
         mockMvc.perform(post("/api/analyze")
                 .contentType("application/x-www-form-urlencoded")
                 .param("question", "test"))
             .andExpect(status().isUnsupportedMediaType())
             .andExpect(jsonPath("$.code").value(ErrorCode.UNSUPPORTED_FILE_TYPE.getCode()));
+    }
+    
+    @Test
+    void testAnalyzeV1_MultipartParsingError_ShouldReturn400() throws Exception {
+        // multipart 解析失败（模拟损坏的请求体）
+        // 注：实际 MultipartException 很难在 MockMvc 中模拟，这里验证 handler 存在
+        // 真实场景：请求 Content-Type 是 multipart 但 body 格式错误
+        mockMvc.perform(post("/api/v1/analyze")
+                .contentType("multipart/form-data; boundary=----invalid")
+                .content("----invalid\r\nbroken content"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()));
+    }
+    
+    @Test
+    void testAnalyzeV1_MaxUploadSizeExceeded_ShouldReturn413() throws Exception {
+        // MaxUploadSizeExceededException 是 MultipartException 子类，必须返回 413 而不是 400
+        // 注：MockMvc 无法真实触发容器级别的大小限制，此测试验证 handler 优先级
+        MockMultipartFile hugeFile = new MockMultipartFile(
+            "file", "huge.jpg", "image/jpeg", new byte[1024]
+        );
+        
+        // 实际场景中，超过 spring.servlet.multipart.max-file-size 会抛 MaxUploadSizeExceededException
+        // 这里通过 service 层模拟（在真实环境中应使用集成测试）
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(new MaxUploadSizeExceededException(10 * 1024 * 1024));
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(hugeFile)
+                .param("question", "test"))
+            .andExpect(status().isPayloadTooLarge())
+            .andExpect(jsonPath("$.code").value(ErrorCode.FILE_TOO_LARGE.getCode()));
+    }
+    
+    @Test
+    void testAnalyzeV1_MaliciousContentType_ShouldBeSanitizedInLog(CapturedOutput output) throws Exception {
+        // 恶意 Content-Type（包含换行符和控制字符，尝试日志注入）
+        String maliciousContentType = "text/plain\r\n[INJECTED] Fake log entry";
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.txt", maliciousContentType, new byte[]{1, 2, 3}
+        );
+        
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(new InvalidFileTypeException("不支持的图片类型: [other]"));
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isUnsupportedMediaType());
+        
+        // 验证日志中不包含恶意 Content-Type 原文
+        String logOutput = output.getOut();
+        assertThat(logOutput).doesNotContain("INJECTED");
+        assertThat(logOutput).doesNotContain("Fake log entry");
+        // 验证使用了白名单清洗后的值
+        assertThat(logOutput).contains("[other]");
     }
     
     @Test

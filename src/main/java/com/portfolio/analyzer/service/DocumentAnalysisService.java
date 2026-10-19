@@ -64,8 +64,9 @@ public class DocumentAnalysisService {
                 fileType = "pdf";
                 logger.info("Processed as PDF file with {} pages", images.size());
             } else {
+                String sanitizedType = LogSanitizer.sanitizeContentType(file.getContentType());
                 throw new InvalidFileTypeException(
-                    "不支持的文件类型: " + file.getContentType() + 
+                    "不支持的文件类型: " + sanitizedType + 
                     "。支持的类型: 图片(JPEG, PNG, GIF, WebP) 和 PDF");
             }
             
