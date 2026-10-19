@@ -579,6 +579,33 @@ spring:
           model: gpt-4o
 ```
 
+## 🔄 持续集成（CI）
+
+本项目使用 GitHub Actions 进行持续集成，确保代码质量和测试覆盖。
+
+### CI 流程
+
+- **触发条件**：
+  - Pull Request 到 `main` 分支
+  - 直接推送到 `main` 分支
+
+- **执行步骤**：
+  - JDK 17 (Temurin) 环境配置
+  - Maven 依赖缓存（加速构建）
+  - 运行单元测试（Surefire）和集成测试（Failsafe）
+  - 上传测试报告 artifacts
+  - 生成测试结果摘要
+
+- **API Key 安全性**：CI 环境使用假的 API Key（`ci-dummy-key-not-real`），不会调用真实的百炼/DashScope API。测试配置（`application-test.yml`）会将 API 端点指向不可达地址，确保测试不依赖外部服务。
+
+- **并发控制**：同一分支的新提交会自动取消旧的 CI 运行，节省资源。
+
+### 查看 CI 结果
+
+1. 访问 Pull Request 页面查看 "Checks" 选项卡
+2. 点击 "Details" 查看详细的测试日志
+3. 下载测试报告 artifacts 进行离线分析
+
 ## 🤝 贡献指南
 
 欢迎提交 Issue 和 Pull Request！
