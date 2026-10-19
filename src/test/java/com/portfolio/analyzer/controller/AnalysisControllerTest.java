@@ -580,6 +580,30 @@ class AnalysisControllerTest {
     }
     
     @Test
+    void testAnalyzeV1_MaliciousContentType_ShouldBeSanitizedInLog(CapturedOutput output) throws Exception {
+        // 恶意 Content-Type（包含换行符和控制字符，尝试日志注入）
+        String maliciousContentType = "text/plain\r\n[INJECTED] Fake log entry";
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.txt", maliciousContentType, new byte[]{1, 2, 3}
+        );
+        
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(new InvalidFileTypeException("不支持的图片类型: [other]"));
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isUnsupportedMediaType());
+        
+        // 验证日志中不包含恶意 Content-Type 原文
+        String logOutput = output.getOut();
+        assertThat(logOutput).doesNotContain("INJECTED");
+        assertThat(logOutput).doesNotContain("Fake log entry");
+        // 验证使用了白名单清洗后的值
+        assertThat(logOutput).contains("[other]");
+    }
+    
+    @Test
     void testAnalyzeV1_UUIDRequestId_ShouldUseAsTraceId() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}

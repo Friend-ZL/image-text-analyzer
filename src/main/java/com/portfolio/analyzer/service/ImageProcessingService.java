@@ -40,7 +40,8 @@ public class ImageProcessingService {
         logger.info("Processing image file: {}", LogSanitizer.sanitizeFilename(file.getOriginalFilename(), file.getContentType()));
         
         if (!isImageFile(file.getContentType())) {
-            throw new InvalidFileTypeException("不支持的图片类型: " + file.getContentType());
+            String sanitizedType = LogSanitizer.sanitizeContentType(file.getContentType());
+            throw new InvalidFileTypeException("不支持的图片类型: " + sanitizedType);
         }
         
         try {
@@ -59,7 +60,8 @@ public class ImageProcessingService {
         logger.info("Processing PDF file: {}", LogSanitizer.sanitizeFilename(file.getOriginalFilename(), file.getContentType()));
         
         if (!isPdfFile(file.getContentType())) {
-            throw new InvalidFileTypeException("不是PDF文件: " + file.getContentType());
+            String sanitizedType = LogSanitizer.sanitizeContentType(file.getContentType());
+            throw new InvalidFileTypeException("不是PDF文件: " + sanitizedType);
         }
         
         List<byte[]> images = new ArrayList<>();
