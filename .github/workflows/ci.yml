@@ -117,9 +117,8 @@ jobs:
       - name: Build Docker image
         run: docker build -t image-text-analyzer:ci-test .
 
-      - name: Validate docker-compose configuration
+      - name: Create test .env file
         run: |
-          # 创建临时 .env 文件用于验证
           cat > .env << EOF
           DASHSCOPE_API_KEY=ci-dummy-key-for-validation
           POSTGRES_USER=test_user
@@ -131,7 +130,29 @@ jobs:
           KEYCLOAK_ADMIN=test_admin
           KEYCLOAK_ADMIN_PASSWORD=test_keycloak_password
           EOF
-          
-          # 验证 docker-compose 配置语法
+
+      - name: Validate docker-compose configuration
+        run: |
           docker compose config > /dev/null
-          echo "✅ docker-compose.yml validation passed"
+          echo "✅ docker-compose.yml syntax validation passed"
+
+      - name: Pull all service images
+        run: |
+          echo "拉取所有服务镜像以验证 tag 存在性..."
+          docker compose pull postgres redis minio keycloak
+          echo "✅ All service images pulled successfully"
+
+      - name: Test services startup and health checks
+        run: |
+          echo "启动所有服务并等待健康检查..."
+          docker compose up -d --wait --timeout 120
+          echo ""
+          echo "检查服务状态..."
+          docker compose ps
+          echo ""
+          echo "✅ All services started and passed health checks"
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v --remove-orphans || true
