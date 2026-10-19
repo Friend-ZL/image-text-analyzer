@@ -21,10 +21,6 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
-  
-  # 允许 bean 覆盖（解决 chatClientBuilder 冲突）
-  main:
-    allow-bean-definition-overriding: true
 
 app:
   analysis:

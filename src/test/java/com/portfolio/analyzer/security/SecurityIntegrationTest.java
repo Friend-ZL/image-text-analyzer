@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
@@ -29,14 +30,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest(
-    properties = {
-        "spring.ai.openai.api-key=test-key",
-        "spring.ai.openai.base-url=http://localhost:8888",
-        "spring.main.allow-bean-definition-overriding=true"
-    },
-    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
-)
+@SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class SecurityIntegrationTest {
@@ -49,6 +43,9 @@ class SecurityIntegrationTest {
     
     @MockBean
     private DocumentAnalysisService analysisService;
+    
+    @MockBean
+    private org.springframework.ai.chat.client.ChatClient.Builder chatClientBuilder;
     
     @Test
     void shouldReturn401ForNoToken() throws Exception {
