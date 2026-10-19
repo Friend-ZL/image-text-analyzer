@@ -1,8 +1,11 @@
 package com.portfolio.analyzer.service;
 
 import com.portfolio.analyzer.ai.MultimodalAIClient;
+import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.dto.AnalysisResponse;
+import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.exception.InvalidFileTypeException;
+import com.portfolio.analyzer.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,15 +38,15 @@ public class DocumentAnalysisService {
      */
     public AnalysisResponse analyzeDocument(MultipartFile file, String question) {
         if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("文件不能为空");
+            throw new BusinessException(ErrorCode.FILE_EMPTY);
         }
         
         if (question == null || question.trim().isEmpty()) {
-            throw new IllegalArgumentException("问题不能为空");
+            throw new BusinessException(ErrorCode.QUESTION_EMPTY);
         }
         
-        logger.info("Analyzing document: {}, size: {} bytes, question: {}", 
-            file.getOriginalFilename(), file.getSize(), question);
+        logger.info("Analyzing document: {}, question: {}", 
+            LogSanitizer.sanitizeFile(file), LogSanitizer.sanitizeQuestion(question));
         
         long startTime = System.currentTimeMillis();
         
@@ -61,8 +64,9 @@ public class DocumentAnalysisService {
                 fileType = "pdf";
                 logger.info("Processed as PDF file with {} pages", images.size());
             } else {
+                String sanitizedType = LogSanitizer.sanitizeContentType(file.getContentType());
                 throw new InvalidFileTypeException(
-                    "不支持的文件类型: " + file.getContentType() + 
+                    "不支持的文件类型: " + sanitizedType + 
                     "。支持的类型: 图片(JPEG, PNG, GIF, WebP) 和 PDF");
             }
             

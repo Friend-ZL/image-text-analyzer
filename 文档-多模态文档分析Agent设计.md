@@ -321,5 +321,199 @@ image-text-analyzer/
 
 ---
 
-**最后更新时间**: 2026-10-15  
-**当前阶段**: Stage 1开发中
+## API 规范底座设计（BE-1）
+
+### 实现概述
+
+**目标**：建立企业级 API 规范底座，为后续 Stage 2 RAG 和 Stage 3 Agent 工具调用奠定基础。
+
+**核心功能**：
+1. ✅ 路由版本化：`/api/v1/analyze`（新版本），`/api/analyze`（旧版本保留兼容）
+2. ✅ 统一响应体：`{code, message, data, traceId}`
+3. ✅ 全局异常处理 + 错误码枚举
+4. ✅ 请求日志过滤器：MDC traceId + 结构化 JSON 日志
+5. ✅ Bean Validation 参数校验
+
+### 新增文件
+
+```
+src/main/java/com/portfolio/analyzer/
+├── common/
+│   ├── ErrorCode.java                 # 错误码枚举
+│   └── ApiResponse.java               # 统一响应体
+├── filter/
+│   └── TraceIdFilter.java             # TraceId 过滤器
+└── exception/
+    └── ModelTimeoutException.java     # 模型超时异常
+
+src/main/resources/
+└── logback-spring.xml                 # Logback 配置（JSON/可读格式切换）
+```
+
+### 修改文件
+
+```
+src/main/java/com/portfolio/analyzer/
+├── controller/
+│   └── AnalysisController.java        # 支持 v1 和旧版接口
+└── exception/
+    └── GlobalExceptionHandler.java    # 使用统一响应体和错误码
+
+src/main/resources/
+└── static/
+    └── index.html                     # 前端调用新版接口
+
+pom.xml                                # 添加 logstash-logback-encoder 依赖
+```
+
+### 错误码设计
+
+**格式**：`E + HTTP状态码 + 两位序号`
+
+| 错误码 | HTTP 状态 | 说明 |
+|--------|----------|------|
+| 00000 | 200 | 成功 |
+| E40001 | 400 | 参数校验失败 |
+| E40002 | 400 | 文件不能为空 |
+| E40003 | 400 | 问题不能为空 |
+| E40801 | 408 | 请求超时 |
+| E41301 | 413 | 文件大小超过限制 |
+| E41501 | 415 | 不支持的文件类型 |
+| E42901 | 429 | 请求过于频繁（预留） |
+| E50001 | 500 | 服务器内部错误 |
+| E50002 | 500 | AI服务调用失败 |
+| E50201 | 502 | 模型服务异常 |
+| E50401 | 504 | 模型调用超时 |
+
+### TraceId 设计
+
+**实现原理**：
+1. `TraceIdFilter` 拦截所有请求
+2. 从请求头 `X-Request-Id` 获取 traceId，没有则生成 UUID
+3. 放入 MDC（Mapped Diagnostic Context）
+4. 响应头 `X-Trace-Id` 返回 traceId
+5. 请求结束时清理 MDC
+
+**日志示例**：
+
+开发环境（可读格式）：
+```
+2026-10-19 10:23:45.123 [http-nio-8080-exec-1] [abc123def456] INFO  c.p.a.controller.AnalysisController - Received analysis request (v1): file=test.jpg, question=测试
+```
+
+生产环境（JSON 格式）：
+```json
+{
+  "timestamp": "2026-10-19T10:23:45.123Z",
+  "level": "INFO",
+  "thread": "http-nio-8080-exec-1",
+  "logger": "c.p.a.controller.AnalysisController",
+  "message": "Received analysis request (v1): file=test.jpg, question=测试",
+  "traceId": "abc123def456",
+  "app": "image-text-analyzer"
+}
+```
+
+### 版本化策略
+
+**废弃接口 `/api/analyze`**：
+- 返回 `Deprecation: true` 头
+- 返回 `Sunset: Thu, 31 Dec 2026 23:59:59 GMT` 头
+- 返回 `Link: </api/v1/analyze>; rel="successor-version"` 头
+- 功能与新接口完全一致，便于客户端平滑迁移
+
+**推荐接口 `/api/v1/analyze`**：
+- 无废弃标记
+- 统一响应体格式
+- 自动 traceId 追踪
+
+### 测试覆盖
+
+**新增测试用例**（`AnalysisControllerTest`）：
+- ✅ v1 接口成功响应包含 traceId
+- ✅ 自定义 X-Request-Id 原样透传
+- ✅ 旧接口返回 Deprecation 头
+- ✅ 文件为空返回 E40002
+- ✅ 问题为空返回 E40003
+- ✅ 文件类型不支持返回 E41501
+- ✅ 文件过大返回 E41301
+- ✅ AI 服务错误返回 E50002
+- ✅ 模型超时返回 E50401
+- ✅ 未知异常返回 E50001
+
+**测试结果**：
+- `mvn test`: 16 tests passed
+- `mvn verify`: BUILD SUCCESS
+
+### 设计取舍
+
+#### 1. 错误码格式
+
+**选择**：`E + HTTP状态码 + 序号`
+
+**理由**：
+- 直观：错误码体现 HTTP 状态，易于理解
+- 分类：4xx 客户端错误，5xx 服务端错误
+- 可扩展：每个状态预留 99 个码位
+
+**备选方案（未采用）**：
+- 业务错误码（如 `USER_001`）：适合复杂业务系统，本项目无此需求
+- 纯数字（如 `10001`）：语义不明确，需查文档
+
+#### 2. HTTP 状态与业务码的关系
+
+**选择**：HTTP 状态与业务错误码强绑定
+
+**理由**：
+- 符合 RESTful 规范
+- 客户端可根据 HTTP 状态快速判断错误类别
+- 便于 API 网关、监控系统统计
+
+**例子**：
+- 参数错误 → 400 + E40001
+- 文件过大 → 413 + E41301
+- 模型超时 → 504 + E50401
+
+#### 3. 日志编码器
+
+**选择**：logstash-logback-encoder
+
+**理由**：
+- 成熟稳定：Spring Boot 社区推荐
+- 结构化：JSON 格式便于日志系统解析
+- Profile 切换：开发环境可读，生产环境 JSON
+
+**备选方案（未采用）**：
+- Log4j2 JSON Layout：需要额外依赖，Spring Boot 默认 Logback
+- 自定义 Pattern：无法输出结构化 JSON
+
+#### 4. TraceId 生成策略
+
+**选择**：优先透传 `X-Request-Id`，否则生成 UUID
+
+**理由**：
+- 兼容性：支持客户端自定义 traceId（如从网关透传）
+- 简单性：UUID 足够唯一，无需依赖外部服务
+- 可扩展：为后续集成 APM（如 SkyWalking）预留扩展点
+
+**备选方案（未采用）**：
+- 分布式 ID（Snowflake）：本项目是单体应用，无此需求
+- 随机字符串：UUID 更标准，工具支持更好
+
+### 后续扩展点
+
+**Stage 2 RAG 接口集成**：
+- `/api/rag/ingest` 和 `/api/rag/query` 直接复用统一响应体
+- 新增错误码（如 `E40004` 向量检索失败）
+
+**Stage 3 工具调用**：
+- 为工具调用错误预留错误码（如 `E50003` OCR 调用失败）
+
+**限流实现**：
+- 使用预留的 `E42901` 错误码
+- 集成 Bucket4j 或 Spring Cloud Gateway Rate Limiter
+
+---
+
+**最后更新时间**: 2026-10-19  
+**当前阶段**: Stage 1 开发完成（含 API 规范底座）
