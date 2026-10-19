@@ -6,7 +6,36 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
       enabled: true
+  
+  # 数据源配置
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+    driver-class-name: org.postgresql.Driver
+  
+  # JPA 配置 - 关闭自动 DDL
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  
+  # Flyway 配置
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+  
+  # Spring AI pgvector - 关闭自动初始化
   ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: false
     openai:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       api-key: ${DASHSCOPE_API_KEY:dummy-key-for-test}
@@ -14,6 +43,14 @@ spring:
         options:
           model: qwen-vl-max
           temperature: 0.7
+  
+  # Security 配置
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI:}
+          jwk-set-uri: ${JWT_JWK_SET_URI:}
 
 app:
   analysis:
@@ -22,6 +59,17 @@ app:
     supported-image-types: image/jpeg,image/png,image/gif,image/webp,image/jpg
     supported-file-types: image/jpeg,image/png,image/gif,image/webp,image/jpg,application/pdf
     pdf-render-dpi: 150
+  
+  # JWT Claim 映射配置
+  security:
+    jwt:
+      claims:
+        tenant-id: tenant_id
+        roles:
+          - realm_access.roles
+          - roles
+        groups:
+          - groups
 
 server:
   port: 8080
