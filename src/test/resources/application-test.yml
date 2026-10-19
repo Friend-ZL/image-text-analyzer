@@ -1,10 +1,12 @@
 spring:
+  profiles:
+    active: dev
+  datasource:
+    password: test
   ai:
     openai:
-      api-key: test-api-key
-      base-url: http://localhost:8888
-
-app:
-  analysis:
-    max-pdf-pages: 5
-    max-file-size-mb: 5
+      api-key: dummy-test-key
+  
+logging:
+  level:
+    com.portfolio.analyzer: DEBUG

@@ -3,6 +3,7 @@ package com.portfolio.analyzer.service;
 import com.portfolio.analyzer.ai.MultimodalAIClient;
 import com.portfolio.analyzer.config.RagConfig;
 import com.portfolio.analyzer.dto.RagQueryResponse;
+import com.portfolio.analyzer.security.TenantContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,7 +21,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class RagQueryServiceTest {
@@ -33,6 +33,9 @@ class RagQueryServiceTest {
 
     @Mock
     private RagConfig ragConfig;
+    
+    @Mock
+    private TenantContext tenantContext;
 
     private RagQueryService ragQueryService;
 
@@ -40,7 +43,11 @@ class RagQueryServiceTest {
     void setUp() {
         lenient().when(ragConfig.getTopK()).thenReturn(3);
         lenient().when(ragConfig.getSimilarityThreshold()).thenReturn(0.7);
-        ragQueryService = new RagQueryService(vectorStore, aiClient, ragConfig);
+        lenient().when(ragConfig.getChatModel()).thenReturn("qwen-plus");
+        lenient().when(tenantContext.getTenantId()).thenReturn("test-tenant");
+        lenient().when(tenantContext.getUserId()).thenReturn("test-user");
+        lenient().when(tenantContext.getGroups()).thenReturn(Arrays.asList("group1"));
+        ragQueryService = new RagQueryService(vectorStore, aiClient, ragConfig, tenantContext);
     }
 
     @Test
@@ -50,24 +57,29 @@ class RagQueryServiceTest {
 
         Map<String, Object> metadata1 = new HashMap<>();
         metadata1.put("source", "doc1.txt");
+        metadata1.put("tenant_id", "test-tenant");
+        metadata1.put("file_name", "doc1.txt");
+        metadata1.put("page_number", 1);
         Document doc1 = new Document("Spring AI is a powerful framework.", metadata1);
         doc1.getMetadata().put("distance", 0.2);
 
         Map<String, Object> metadata2 = new HashMap<>();
         metadata2.put("source", "doc2.txt");
+        metadata2.put("tenant_id", "test-tenant");
+        metadata2.put("file_name", "doc2.txt");
+        metadata2.put("page_number", 1);
         Document doc2 = new Document("It helps build AI applications easily.", metadata2);
         doc2.getMetadata().put("distance", 0.3);
 
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(Arrays.asList(doc1, doc2));
-        when(aiClient.getModelName()).thenReturn("qwen-vl-max");
         when(aiClient.chat(anyString())).thenReturn(expectedAnswer);
 
         RagQueryResponse response = ragQueryService.queryWithContext(question);
 
         assertNotNull(response);
         assertEquals(expectedAnswer, response.getAnswer());
-        assertEquals("qwen-vl-max", response.getModel());
+        assertEquals("qwen-plus", response.getModel());
         assertEquals(2, response.getSources().size());
         assertTrue(response.getLatencyMs() >= 0);
     }
@@ -75,17 +87,14 @@ class RagQueryServiceTest {
     @Test
     void testQueryWithContext_NoRelevantDocuments() {
         String question = "What is quantum computing?";
-        String expectedAnswer = "I don't have enough context to answer this question.";
 
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(Arrays.asList());
-        when(aiClient.getModelName()).thenReturn("qwen-vl-max");
-        when(aiClient.chat(anyString())).thenReturn(expectedAnswer);
 
         RagQueryResponse response = ragQueryService.queryWithContext(question);
 
         assertNotNull(response);
-        assertEquals(expectedAnswer, response.getAnswer());
+        assertTrue(response.getAnswer().contains("没有找到相关信息"));
         assertTrue(response.getSources().isEmpty());
     }
 
@@ -104,22 +113,27 @@ class RagQueryServiceTest {
     }
 
     @Test
-    void testQueryWithContext_FiltersBelowThreshold() {
+    void testQueryWithContext_FiltersByTenant() {
         String question = "Test question";
 
         Map<String, Object> metadata1 = new HashMap<>();
         metadata1.put("source", "doc1.txt");
+        metadata1.put("tenant_id", "test-tenant");
+        metadata1.put("file_name", "doc1.txt");
+        metadata1.put("page_number", 1);
         Document doc1 = new Document("Relevant content.", metadata1);
         doc1.getMetadata().put("distance", 0.2);
 
         Map<String, Object> metadata2 = new HashMap<>();
         metadata2.put("source", "doc2.txt");
-        Document doc2 = new Document("Not relevant content.", metadata2);
-        doc2.getMetadata().put("distance", 0.8);
+        metadata2.put("tenant_id", "other-tenant");
+        metadata2.put("file_name", "doc2.txt");
+        metadata2.put("page_number", 1);
+        Document doc2 = new Document("Other tenant content.", metadata2);
+        doc2.getMetadata().put("distance", 0.15);
 
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(Arrays.asList(doc1, doc2));
-        when(aiClient.getModelName()).thenReturn("qwen-vl-max");
         when(aiClient.chat(anyString())).thenReturn("Answer based on context.");
 
         RagQueryResponse response = ragQueryService.queryWithContext(question);
@@ -130,17 +144,19 @@ class RagQueryServiceTest {
     }
 
     @Test
-    void testQueryWithContext_CalculatesSimilarityCorrectly() {
+    void testQueryWithContext_ExtractsSimilarityCorrectly() {
         String question = "Test question";
 
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("source", "doc.txt");
+        metadata.put("tenant_id", "test-tenant");
+        metadata.put("file_name", "doc.txt");
+        metadata.put("page_number", 1);
         Document doc = new Document("Test content.", metadata);
         doc.getMetadata().put("distance", 0.3);
 
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
                 .thenReturn(Arrays.asList(doc));
-        when(aiClient.getModelName()).thenReturn("qwen-vl-max");
         when(aiClient.chat(anyString())).thenReturn("Answer.");
 
         RagQueryResponse response = ragQueryService.queryWithContext(question);
@@ -151,3 +167,4 @@ class RagQueryServiceTest {
         assertEquals(expectedSimilarity, response.getSources().get(0).getSimilarity(), 0.01);
     }
 }
+
