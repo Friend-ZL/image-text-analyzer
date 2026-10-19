@@ -25,11 +25,6 @@
         </encoder>
     </appender>
     
-    <!-- 敏感信息过滤器：不打印 API Key -->
-    <turboFilter class="ch.qos.logback.classic.turbo.TurboFilter">
-        <Name>SensitiveDataFilter</Name>
-    </turboFilter>
-    
     <!-- 开发环境：使用可读格式 -->
     <springProfile name="default,dev">
         <root level="INFO">
