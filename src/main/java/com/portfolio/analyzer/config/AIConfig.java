@@ -17,7 +17,7 @@ public class AIConfig {
     private Double temperature;
     
     @Bean
-    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
+    @org.springframework.context.annotation.Primary
     public ChatClient.Builder chatClientBuilder(OpenAiChatModel chatModel) {
         return ChatClient.builder(chatModel)
             .defaultOptions(OpenAiChatOptions.builder()
