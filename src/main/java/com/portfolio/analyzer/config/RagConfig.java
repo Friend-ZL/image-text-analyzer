@@ -23,6 +23,14 @@ public class RagConfig {
     private String embeddingModel = "text-embedding-v4";
     private int embeddingDimensions = 1024;
     
+    /**
+     * HNSW ef_search参数（控制搜索候选集大小）
+     * 
+     * <p>更大的值提高召回率但降低性能。
+     * 默认100，对于过滤查询应适当提高。
+     */
+    private int hnswEfSearch = 100;
+    
     public long getMaxIngestSizeBytes() {
         return maxIngestSizeMb * 1024L * 1024L;
     }

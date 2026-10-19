@@ -1,102 +1,79 @@
 package com.portfolio.analyzer.controller;
 
-import com.portfolio.analyzer.dto.IngestResponse;
 import com.portfolio.analyzer.dto.RagQueryRequest;
 import com.portfolio.analyzer.dto.RagQueryResponse;
+import com.portfolio.analyzer.security.TenantContext;
+import com.portfolio.analyzer.security.TenantPrincipal;
 import com.portfolio.analyzer.service.DocumentIngestionService;
 import com.portfolio.analyzer.service.RagQueryService;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.Size;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.util.Map;
 
 /**
- * RAG API 控制器
+ * RAG控制器
  * 
- * <p>提供文档入库和检索增强问答API。
+ * <p>提供文档入库和RAG查询的HTTP API。
+ * 在entry层解析TenantPrincipal一次，然后传递给服务层。
  * 
- * @since Stage 2
+ * @since Stage 2 - VectorStore port refactor
  */
 @RestController
 @RequestMapping("/api/rag")
-@Validated
 public class RagController {
     
-    private static final Logger logger = LoggerFactory.getLogger(RagController.class);
-    
+    private final TenantContext tenantContext;
     private final DocumentIngestionService ingestionService;
     private final RagQueryService queryService;
     
-    public RagController(DocumentIngestionService ingestionService, 
-                        RagQueryService queryService) {
+    public RagController(
+            TenantContext tenantContext,
+            DocumentIngestionService ingestionService,
+            RagQueryService queryService) {
+        this.tenantContext = tenantContext;
         this.ingestionService = ingestionService;
         this.queryService = queryService;
     }
     
     /**
-     * 文档入库接口
+     * 入库文档
      * 
-     * @param file 要入库的文档文件
-     * @param source 文档来源标识
+     * @param file 上传的文件
+     * @param source 文档来源（可选）
      * @return 入库结果
      */
     @PostMapping("/ingest")
-    public ResponseEntity<IngestResponse> ingestDocument(
+    public ResponseEntity<?> ingestDocument(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "source", required = false) @Size(max = 128) String source) 
-            throws IOException {
+            @RequestParam(value = "source", required = false, defaultValue = "upload") String source) {
         
-        if (source == null || source.trim().isEmpty()) {
-            source = file.getOriginalFilename();
+        try {
+            // 在entry层解析TenantPrincipal一次
+            TenantPrincipal principal = tenantContext.current();
+            
+            Map<String, Object> result = ingestionService.ingestDocument(principal, file, source);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Ingestion failed", "message", e.getMessage()));
         }
-        
-        logger.info("Received ingest request: file={}, size={}, source={}", 
-                file.getOriginalFilename(), file.getSize(), source);
-        
-        Map<String, Object> result = ingestionService.ingestDocument(file, source);
-        
-        IngestResponse response = new IngestResponse(
-                (String) result.get("documentId"),
-                (Integer) result.get("pagesProcessed"),
-                (Integer) result.get("chunksProcessed"),
-                (Long) result.get("processingTimeMs")
-        );
-        
-        logger.info("Ingest completed: documentId={}, pages={}, chunks={}, time={}ms",
-                response.getDocumentId(),
-                response.getPagesProcessed(),
-                response.getChunksProcessed(),
-                response.getProcessingTimeMs());
-        
-        return ResponseEntity.ok(response);
     }
     
     /**
-     * RAG检索增强问答接口
+     * RAG查询
      * 
-     * @param request 查询请求（包含问题和可选的会话ID）
-     * @return 答案和相关来源
+     * @param request 查询请求（包含问题）
+     * @return 查询响应（包含答案和来源）
      */
     @PostMapping("/query")
-    public ResponseEntity<RagQueryResponse> queryWithRag(
-            @Valid @RequestBody RagQueryRequest request) {
+    public ResponseEntity<RagQueryResponse> query(@RequestBody RagQueryRequest request) {
+        // 在entry层解析TenantPrincipal一次
+        TenantPrincipal principal = tenantContext.current();
         
-        logger.info("Received RAG query: questionLength={}, conversationId={}", 
-                request.getQuestion().length(), request.getConversationId());
-        
-        RagQueryResponse response = queryService.queryWithContext(request.getQuestion());
-        
-        logger.info("RAG query completed: sources={}, latency={}ms",
-                response.getSources().size(), response.getLatencyMs());
-        
+        RagQueryResponse response = queryService.queryWithContext(principal, request.getQuestion());
         return ResponseEntity.ok(response);
     }
 }
-

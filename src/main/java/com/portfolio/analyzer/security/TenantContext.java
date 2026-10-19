@@ -1,49 +1,58 @@
 package com.portfolio.analyzer.security;
 
-import java.util.List;
+import java.util.Set;
 
 /**
  * 租户上下文接口
  * 
- * <p>提供多租户隔离和访问控制所需的身份信息。
- * 生产环境应通过 JWT/OIDC 实现，开发环境可使用请求头模拟。
+ * <p>定义从请求上下文（HTTP头、JWT等）提取租户、用户、角色和组信息的契约。
  * 
- * <p><strong>安全要求：</strong>
- * <ul>
- *   <li>生产环境必须有安全的实现（JWT验证、OIDC）</li>
- *   <li>非dev profile且无实现时应用启动失败（fail closed）</li>
- *   <li>租户ID和用户组不能从请求参数获取，必须从可信凭证解析</li>
- * </ul>
+ * <p>使用方式：在controller/entry层调用 {@link #current()} 一次获取不可变快照，
+ * 然后将 {@link TenantPrincipal} 作为显式参数传递给服务层，而不是在服务内部调用此接口。
  * 
- * @since Stage 2 Refactor
+ * @since Stage 2 - Security refactor
  */
 public interface TenantContext {
     
     /**
-     * 获取当前请求的租户ID
-     * 
-     * @return 租户ID，不能为 null
-     * @throws IllegalStateException 如果租户上下文未初始化
+     * 获取当前租户ID
+     * @return 租户ID
+     * @throws TenantMissingException 如果租户ID缺失或空白
      */
     String getTenantId();
     
     /**
      * 获取当前用户ID
-     * 
-     * @return 用户ID，可选
+     * @return 用户ID，可能为null（匿名访问）
      */
     String getUserId();
     
     /**
-     * 获取当前用户所属的组/角色列表
+     * 获取当前用户的角色集合（API权限）
      * 
-     * <p>用于ACL过滤，用户只能访问：
-     * <ul>
-     *   <li>自己创建的文档（owner_user_id = userId）</li>
-     *   <li>授权给其所属组的文档（acl_groups @> groups）</li>
-     * </ul>
+     * <p>来自OIDC realm/client roles，用于API端点访问控制。
      * 
-     * @return 组列表，不能为 null（可以为空列表）
+     * @return 角色集合，不为null（但可能为空）
      */
-    List<String> getGroups();
+    Set<String> getRoles();
+    
+    /**
+     * 获取当前用户的组集合（文档ACL）
+     * 
+     * <p>用于文档级访问控制。
+     * 
+     * @return 组集合，不为null（但可能为空）
+     */
+    Set<String> getGroups();
+    
+    /**
+     * 获取当前租户主体的不可变快照
+     * 
+     * <p>应在controller/entry层调用一次，然后将返回的 {@link TenantPrincipal}
+     * 作为显式参数传递给服务层方法。
+     * 
+     * @return 租户主体快照
+     * @throws TenantMissingException 如果租户ID缺失或空白
+     */
+    TenantPrincipal current();
 }

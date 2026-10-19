@@ -1,6 +1,6 @@
 package com.portfolio.analyzer.exception;
 
-import com.portfolio.analyzer.exception.InvalidFileContentException;
+import com.portfolio.analyzer.security.TenantMissingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -27,6 +27,18 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
     
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    
+    /**
+     * 租户信息缺失异常 -> 401 Unauthorized
+     * 
+     * <p>当请求缺少X-Tenant-Id等必需头时抛出。
+     * Backend将在BE-1的error-code系统中重新映射此异常。
+     */
+    @ExceptionHandler(TenantMissingException.class)
+    public ResponseEntity<Map<String, Object>> handleTenantMissing(TenantMissingException ex) {
+        logger.warn("Tenant missing: {}", ex.getMessage());
+        return buildErrorResponse(HttpStatus.UNAUTHORIZED, "TENANT_MISSING", ex.getMessage());
+    }
     
     @ExceptionHandler(InvalidFileTypeException.class)
     public ResponseEntity<Map<String, Object>> handleInvalidFileType(InvalidFileTypeException ex) {

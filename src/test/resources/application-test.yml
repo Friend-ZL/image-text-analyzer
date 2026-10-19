@@ -1,12 +1,35 @@
 spring:
   profiles:
-    active: dev
-  datasource:
-    password: test
+    active: test,dev
   ai:
     openai:
-      api-key: dummy-test-key
-  
+      api-key: test-key
+      base-url: http://localhost:8080/mock
+  datasource:
+    # Overridden by @DynamicPropertySource in tests
+    url: jdbc:postgresql://localhost:5432/testdb
+    username: test
+    password: test
+  flyway:
+    enabled: true
+    clean-disabled: false
+
+app:
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
+    hnsw-ef-search: 100
+  analysis:
+    max-pdf-pages: 10
+    max-file-size-mb: 10
+
 logging:
   level:
     com.portfolio.analyzer: DEBUG
+    org.springframework.ai: INFO
+    org.flywaydb: INFO
+    org.testcontainers: INFO
