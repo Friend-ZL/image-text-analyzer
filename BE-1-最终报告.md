@@ -102,12 +102,12 @@
 ### 测试统计
 
 ```
-Tests run: 16, Failures: 0, Errors: 0, Skipped: 0
+Tests run: 28, Failures: 0, Errors: 0, Skipped: 0
 ```
 
 ### 测试明细
 
-**`AnalysisControllerTest`（11 个测试）**：
+**`AnalysisControllerTest`（12 个测试）**：
 1. ✅ `testAnalyzeV1_ValidRequest_ShouldReturnSuccessWithTraceId` - v1 接口成功响应
 2. ✅ `testAnalyzeV1_WithCustomTraceId_ShouldPreserveIt` - 自定义 traceId 透传
 3. ✅ `testAnalyze_DeprecatedEndpoint_ShouldReturnDeprecationHeaders` - 旧接口废弃标记
@@ -121,17 +121,17 @@ Tests run: 16, Failures: 0, Errors: 0, Skipped: 0
 11. ✅ `testAnalyzeV1_UnexpectedException_ShouldReturnInternalError` - 未知异常
 12. ✅ `testHealth_ShouldReturnOK` - 健康检查
 
-**其他测试（5 个）**：
-- ✅ `MultimodalAIClientTest` - 2 tests passed
-- ✅ `DocumentAnalysisServiceTest` - 1 test passed
-- ✅ `ImageProcessingServiceTest` - 2 tests passed
+**其他测试（16 个）**：
+- ✅ `MultimodalAIClientTest` - 4 tests passed
+- ✅ `DocumentAnalysisServiceTest` - 5 tests passed
+- ✅ `ImageProcessingServiceTest` - 7 tests passed
 
 ### 构建结果
 
 ```bash
 [INFO] BUILD SUCCESS
 [INFO] ------------------------------------------------------------------------
-[INFO] Total time:  3.679 s
+[INFO] Total time:  4.208 s
 [INFO] Finished at: 2026-10-19T06:45:32Z
 [INFO] ------------------------------------------------------------------------
 ```
@@ -260,7 +260,7 @@ Tests run: 16, Failures: 0, Errors: 0, Skipped: 0
 
 **任务 BE-1 已完成**，所有验收标准均已满足：
 
-- ✅ `mvn verify` 通过（16 tests passed, 0 failures）
+- ✅ `mvn verify` 通过（28 tests passed, 0 failures）
 - ✅ 测试不依赖真实 DASHSCOPE_API_KEY（已 mock）
 - ✅ 每一类错误码都有 MockMvc 测试
 - ✅ 测试断言响应头和日志（MDC）里都带 traceId
