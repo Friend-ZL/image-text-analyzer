@@ -18,6 +18,10 @@
 - ✅ 基于阿里云百炼 qwen-vl-max 视觉语言模型
 - ✅ OpenAI 兼容接口，可一键切换至 GPT-4o
 - ✅ 拖拽式上传的现代化前端界面
+- ✅ **企业级 API 规范**：统一响应体、错误码体系、请求追踪
+- ✅ **RESTful API 版本化**：`/api/v1/analyze`（当前），`/api/analyze`（已废弃但保留兼容）
+- ✅ **请求链路追踪**：每个请求自动生成 traceId，支持日志关联
+- ✅ **结构化日志**：JSON 格式日志（生产环境），可读格式（开发环境）
 - ✅ 完整的错误处理和参数验证
 - ✅ 单元测试和集成测试覆盖
 
@@ -114,37 +118,172 @@ mvn spring-boot:run
 
 在浏览器中打开：http://localhost:8080
 
-## 📖 API 使用示例
+## 📖 API 接口规范
 
-### 分析图片
+### 接口概览
+
+| 接口路径 | 方法 | 说明 | 状态 |
+|---------|------|------|------|
+| `/api/v1/analyze` | POST | 文档分析接口（当前版本） | ✅ 推荐使用 |
+| `/api/analyze` | POST | 文档分析接口（旧版本） | ⚠️ 已废弃 |
+| `/api/health` | GET | 健康检查接口 | ✅ 正常 |
+
+### 统一响应体格式
+
+所有 API 接口均返回统一的响应体结构：
+
+```json
+{
+  "code": "00000",
+  "message": "成功",
+  "data": { ... },
+  "traceId": "a1b2c3d4e5f6..."
+}
+```
+
+**字段说明：**
+- `code`：错误码，成功为 `"00000"`，错误格式为 `E + HTTP状态码 + 序号`
+- `message`：响应消息，成功或错误描述
+- `data`：业务数据，成功时返回，失败时为 `null`
+- `traceId`：请求追踪 ID，用于日志关联和问题排查
+
+### 请求追踪
+
+每个请求都会自动生成一个 `traceId`，用于关联请求日志：
+
+- **自动生成**：如果请求头中没有 `X-Request-Id`，系统会自动生成一个 UUID
+- **透传机制**：如果请求头包含 `X-Request-Id`，系统会原样透传作为 traceId
+- **响应头返回**：响应头 `X-Trace-Id` 会返回本次请求的 traceId
+- **日志关联**：所有日志中都会包含 traceId，便于问题排查
+
+### API 使用示例
+
+#### 1. 分析图片（推荐使用 v1 接口）
 
 ```bash
-curl -X POST http://localhost:8080/api/analyze \
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "X-Request-Id: my-custom-trace-id-12345" \
   -F "file=@example.jpg" \
   -F "question=这张图片中的内容是什么？"
 ```
 
-### 分析 PDF
+**成功响应示例：**
+
+```json
+{
+  "code": "00000",
+  "message": "成功",
+  "data": {
+    "answer": "这是一张包含技术架构图的图片，展示了...",
+    "model": "qwen-vl-max",
+    "latencyMs": 1523,
+    "metadata": {
+      "fileName": "example.jpg",
+      "fileType": "image",
+      "fileSize": 245632,
+      "contentType": "image/jpeg"
+    }
+  },
+  "traceId": "my-custom-trace-id-12345"
+}
+```
+
+#### 2. 分析 PDF
 
 ```bash
-curl -X POST http://localhost:8080/api/analyze \
+curl -X POST http://localhost:8080/api/v1/analyze \
   -F "file=@document.pdf" \
   -F "question=请总结这个文档的主要内容"
 ```
 
-### 响应示例
+#### 3. 使用旧版接口（已废弃）
+
+```bash
+curl -X POST http://localhost:8080/api/analyze \
+  -F "file=@example.jpg" \
+  -F "question=测试"
+```
+
+**响应头会包含废弃提示：**
+
+```
+Deprecation: true
+Sunset: Thu, 31 Dec 2026 23:59:59 GMT
+Link: </api/v1/analyze>; rel="successor-version"
+```
+
+### 错误码表
+
+#### 成功响应
+
+| 错误码 | HTTP 状态 | 说明 |
+|--------|----------|------|
+| 00000 | 200 | 成功 |
+
+#### 4xx 客户端错误
+
+| 错误码 | HTTP 状态 | 说明 | 常见原因 |
+|--------|----------|------|---------|
+| E40001 | 400 | 参数校验失败 | 必填参数缺失、格式不正确 |
+| E40002 | 400 | 文件不能为空 | 未上传文件或文件为空 |
+| E40003 | 400 | 问题不能为空 | question 参数为空或空白字符串 |
+| E40801 | 408 | 请求超时 | 请求处理时间过长 |
+| E41301 | 413 | 文件大小超过限制 | 文件大小超过 10MB |
+| E41501 | 415 | 不支持的文件类型 | 文件类型不是支持的图片或 PDF 格式 |
+| E42901 | 429 | 请求过于频繁 | 触发限流（预留，当前未启用） |
+
+#### 5xx 服务端错误
+
+| 错误码 | HTTP 状态 | 说明 | 常见原因 |
+|--------|----------|------|---------|
+| E50001 | 500 | 服务器内部错误 | 未预期的系统异常 |
+| E50002 | 500 | AI服务调用失败 | 模型服务异常 |
+| E50201 | 502 | 模型服务异常 | 上游模型服务不可用 |
+| E50401 | 504 | 模型调用超时 | 模型响应时间过长 |
+
+### 错误响应示例
+
+#### 参数校验失败
 
 ```json
 {
-  "answer": "这是一张包含技术架构图的图片，展示了...",
-  "model": "qwen-vl-max",
-  "latencyMs": 1523,
-  "metadata": {
-    "fileName": "example.jpg",
-    "fileType": "image",
-    "fileSize": 245632,
-    "contentType": "image/jpeg"
-  }
+  "code": "E40001",
+  "message": "文件不能为空",
+  "data": null,
+  "traceId": "abc123def456"
+}
+```
+
+#### 文件过大
+
+```json
+{
+  "code": "E41301",
+  "message": "文件大小超过10MB限制",
+  "data": null,
+  "traceId": "xyz789uvw012"
+}
+```
+
+#### 不支持的文件类型
+
+```json
+{
+  "code": "E41501",
+  "message": "不支持的文件类型: text/plain",
+  "data": null,
+  "traceId": "qwe456rty789"
+}
+```
+
+#### AI 服务错误
+
+```json
+{
+  "code": "E50002",
+  "message": "模型服务暂时不可用",
+  "data": null,
+  "traceId": "asd123fgh456"
 }
 ```
 
@@ -172,19 +311,90 @@ mvn verify
 
 ## 🔍 核心设计决策（面试要点）
 
-### 1. 为什么选择 Spring AI？
+### 1. API 规范底座设计
+
+#### 1.1 为什么需要统一响应体？
+
+**问题背景**：原始实现中，成功返回业务数据，失败返回 `{error, message, timestamp}`，格式不统一，客户端需要多种解析逻辑。
+
+**设计方案**：`{code, message, data, traceId}` 统一格式
+
+- **统一性**：成功和失败都用相同结构，客户端解析逻辑统一
+- **可扩展性**：为后续 RAG 接口（`/api/rag/*`）也能直接复用
+- **可追踪性**：每个响应都带 traceId，便于日志关联和问题排查
+
+#### 1.2 错误码设计原则
+
+**错误码格式**：`E + HTTP状态码 + 两位序号`，例如 `E40001`
+
+- **语义清晰**：错误码直接体现 HTTP 状态，易于理解
+- **分类管理**：按 4xx（客户端）和 5xx（服务端）分类
+- **可扩展**：每个状态码预留 99 个错误码位，足够扩展
+
+**HTTP 状态映射策略**：
+- 参数错误 → 400 Bad Request
+- 文件过大 → 413 Payload Too Large
+- 不支持的类型 → 415 Unsupported Media Type
+- 模型超时 → 504 Gateway Timeout
+- AI 服务错误 → 500/502（区分内部错误和上游错误）
+
+**优势**：客户端可以根据 HTTP 状态快速判断错误类别，再根据错误码精确定位问题。
+
+#### 1.3 请求追踪（TraceId）设计
+
+**实现方式**：Filter + MDC（Mapped Diagnostic Context）
+
+- **优先透传**：从请求头 `X-Request-Id` 获取，没有则生成 UUID
+- **全链路记录**：放入 MDC，所有日志自动带上 traceId
+- **响应头返回**：通过 `X-Trace-Id` 返回给客户端
+
+**为什么不用 Spring Cloud Sleuth？**
+- 本项目是单体应用，不需要分布式追踪的复杂性
+- 自实现 Filter 只需 30 行代码，轻量高效
+- 为后续集成 APM（如 SkyWalking）预留了扩展点
+
+#### 1.4 日志编码器选择
+
+**选择 logstash-logback-encoder**：
+
+- **结构化日志**：JSON 格式，便于日志收集系统（ELK、Loki）解析
+- **MDC 集成**：自动包含 traceId 等上下文信息
+- **Profile 切换**：开发环境可读格式，生产环境 JSON，提升开发体验
+
+**敏感信息保护**：
+- API Key 只从环境变量读取，日志中不输出
+- 文件内容和图片 base64 不打印到日志
+
+#### 1.5 版本化策略
+
+**方案**：路径版本化（`/api/v1/analyze`）
+
+- **简单直观**：版本号在 URL 中，一目了然
+- **易于路由**：Spring MVC 原生支持，无需额外配置
+- **兼容平滑**：旧版本保留并返回 `Deprecation` 头，给客户端足够的迁移时间
+
+**为什么不用 Header 或 Query 参数版本化？**
+- Header 版本化对开发者不友好，调试时不直观
+- Query 参数版本化容易被遗漏，且不符合 RESTful 规范
+
+**废弃策略**：
+- `Deprecation: true` - 标记接口已废弃
+- `Sunset: <date>` - 明确下线时间
+- `Link: <new-url>; rel="successor-version"` - 指向新版本
+
+### 2. 为什么选择 Spring AI？
 
 - **统一抽象层**：降低模型切换成本，从阿里云切换到 OpenAI 仅需修改配置
 - **生态集成**：与 Spring Boot 深度集成，简化配置和依赖注入
 - **OpenAI 兼容**：支持多种 LLM 厂商，避免供应商锁定
 
-### 2. PDF 处理策略
+### 3. PDF 处理策略
 
 - 使用 PDFBox 将 PDF 页面渲染为图片（150 DPI）
 - 限制前 10 页以避免 Token 超限和处理延迟
 - 每页独立图片，充分利用 VLM 的多图分析能力
 
-### 3. 可扩展性设计
+### 4. 可扩展性设计
 
 **分层架构**：Controller → Service → AI Client，职责清晰
 - Controller：处理 HTTP 请求和参数验证
@@ -207,14 +417,14 @@ interface AgentTool {
 }
 ```
 
-### 4. 错误处理策略
+### 5. 错误处理策略
 
 - **参数验证前置**：文件类型、大小在服务层提前验证
 - **统一异常处理**：GlobalExceptionHandler 返回标准 JSON 错误格式
 - **AI 调用容错**：Spring AI 内置超时和重试机制
 - **安全考虑**：API Key 仅从环境变量读取，错误信息脱敏
 
-### 5. 测试策略
+### 6. 测试策略
 
 - **单元测试**：使用 Mockito 模拟依赖，测试业务逻辑
 - **集成测试**：使用 `@WebMvcTest` 测试 API 端点
