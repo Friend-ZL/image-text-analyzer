@@ -2,7 +2,10 @@ package com.portfolio.analyzer.exception;
 
 import com.portfolio.analyzer.common.ApiResponse;
 import com.portfolio.analyzer.common.ErrorCode;
+<<<<<<< HEAD
 import com.portfolio.analyzer.security.TenantMissingException;
+=======
+>>>>>>> origin/main
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,6 +50,7 @@ public class GlobalExceptionHandler {
     }
     
     /**
+<<<<<<< HEAD
      * 处理租户信息缺失异常
      */
     @ExceptionHandler(TenantMissingException.class)
@@ -56,6 +60,8 @@ public class GlobalExceptionHandler {
     }
     
     /**
+=======
+>>>>>>> origin/main
      * 处理不支持的文件类型
      */
     @ExceptionHandler(InvalidFileTypeException.class)

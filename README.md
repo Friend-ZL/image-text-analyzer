@@ -147,6 +147,7 @@ mvn spring-boot:run
 
 ### 5. 访问和测试
 
+<<<<<<< HEAD
 **生产环境**：需要在请求头中携带 JWT token
 
 ```bash
@@ -213,6 +214,54 @@ curl -X POST http://localhost:8080/api/v1/analyze \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/analyze \
+=======
+在浏览器中打开：http://localhost:8080
+
+## 📖 API 接口规范
+
+### 接口概览
+
+| 接口路径 | 方法 | 说明 | 状态 |
+|---------|------|------|------|
+| `/api/v1/analyze` | POST | 文档分析接口（当前版本） | ✅ 推荐使用 |
+| `/api/analyze` | POST | 文档分析接口（旧版本） | ⚠️ 已废弃 |
+| `/api/health` | GET | 健康检查接口 | ✅ 正常 |
+
+### 统一响应体格式
+
+所有 API 接口均返回统一的响应体结构：
+
+```json
+{
+  "code": "00000",
+  "message": "成功",
+  "data": { ... },
+  "traceId": "a1b2c3d4e5f6..."
+}
+```
+
+**字段说明：**
+- `code`：错误码，成功为 `"00000"`，错误格式为 `E + HTTP状态码 + 序号`
+- `message`：响应消息，成功或错误描述
+- `data`：业务数据，成功时返回，失败时为 `null`
+- `traceId`：请求追踪 ID，用于日志关联和问题排查
+
+### 请求追踪
+
+每个请求都会自动生成一个 `traceId`，用于关联请求日志：
+
+- **自动生成**：如果请求头中没有 `X-Request-Id`，系统会自动生成一个 UUID
+- **透传机制**：如果请求头包含 `X-Request-Id`，系统会原样透传作为 traceId
+- **响应头返回**：响应头 `X-Trace-Id` 会返回本次请求的 traceId
+- **日志关联**：所有日志中都会包含 traceId，便于问题排查
+
+### API 使用示例
+
+#### 1. 分析图片（推荐使用 v1 接口）
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+>>>>>>> origin/main
   -H "X-Request-Id: my-custom-trace-id-12345" \
   -F "file=@example.jpg" \
   -F "question=这张图片中的内容是什么？"
@@ -286,9 +335,12 @@ Link: </api/v1/analyze>; rel="successor-version"
 | E40001 | 400 | 参数校验失败 | 必填参数缺失、格式不正确 |
 | E40002 | 400 | 文件不能为空 | 未上传文件或文件为空 |
 | E40003 | 400 | 问题不能为空 | question 参数为空或空白字符串 |
+<<<<<<< HEAD
 | E40101 | 401 | 未认证或令牌无效 | 缺少 JWT token 或 token 无效/过期 |
 | E40102 | 401 | 租户信息缺失 | JWT token 中缺少 tenant_id claim |
 | E40301 | 403 | 无权限访问 | 用户已认证但无访问权限 |
+=======
+>>>>>>> origin/main
 | E40401 | 404 | 请求的资源不存在 | 访问不存在的端点 |
 | E40501 | 405 | 不支持的请求方法 | 使用了不支持的 HTTP 方法（响应包含 `Allow` 头） |
 | E41301 | 413 | 文件大小超过限制 | 文件大小超过配置的上限 |
