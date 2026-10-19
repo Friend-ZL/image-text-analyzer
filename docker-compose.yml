@@ -47,28 +47,33 @@ services:
 
   # ============================================
   # MinIO Object Storage
+  # 注意: MinIO 官方镜像在公开注册表中需要认证，暂时注释
+  # 如需使用，请：
+  #   1. 使用本地构建的 MinIO 镜像
+  #   2. 或使用私有注册表
+  #   3. 或等待 MinIO 提供公开镜像
   # ============================================
-  minio:
-    image: quay.io/minio/minio:latest
-    container_name: analyzer-minio
-    restart: unless-stopped
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
-    networks:
-      - analyzer-network
+  # minio:
+  #   image: quay.io/minio/minio:latest
+  #   container_name: analyzer-minio
+  #   restart: unless-stopped
+  #   environment:
+  #     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  #     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "127.0.0.1:9000:9000"
+  #     - "127.0.0.1:9001:9001"
+  #   volumes:
+  #     - minio-data:/data
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 10s
+  #   networks:
+  #     - analyzer-network
 
   # ============================================
   # Keycloak (Identity and Access Management)
@@ -123,8 +128,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      # minio:
+      #   condition: service_healthy
       keycloak:
         condition: service_healthy
     networks:
@@ -138,8 +143,8 @@ volumes:
     name: analyzer-postgres-data
   redis-data:
     name: analyzer-redis-data
-  minio-data:
-    name: analyzer-minio-data
+  # minio-data:
+  #   name: analyzer-minio-data
   keycloak-data:
     name: analyzer-keycloak-data
 

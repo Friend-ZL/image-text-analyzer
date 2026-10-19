@@ -139,7 +139,7 @@ jobs:
       - name: Pull all service images
         run: |
           echo "拉取所有服务镜像以验证 tag 存在性..."
-          docker compose pull postgres redis minio keycloak
+          docker compose pull postgres redis keycloak
           echo "✅ All service images pulled successfully"
 
       - name: Test services startup and health checks
