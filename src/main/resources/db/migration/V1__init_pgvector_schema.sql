@@ -1,7 +1,7 @@
 -- Enable pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- Document metadata table
+-- Document metadata table (for management)
 CREATE TABLE document (
     document_id UUID PRIMARY KEY,
     tenant_id VARCHAR(64) NOT NULL,
@@ -22,29 +22,21 @@ CREATE TABLE document (
 CREATE INDEX idx_document_tenant ON document(tenant_id);
 CREATE INDEX idx_document_tenant_owner ON document(tenant_id, owner_user_id);
 
--- Document chunk table (vector store)
-CREATE TABLE document_chunk (
-    chunk_id UUID PRIMARY KEY,
-    document_id UUID NOT NULL REFERENCES document(document_id) ON DELETE CASCADE,
-    tenant_id VARCHAR(64) NOT NULL,
-    page_number INT,
-    chunk_index INT,
-    source_type VARCHAR(20),
+-- Vector store table (compatible with Spring AI PgVectorStore)
+-- Additional metadata stored in jsonb: tenant_id, document_id, page_number, etc.
+CREATE TABLE vector_store (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     content TEXT NOT NULL,
     metadata JSONB,
-    embedding_model VARCHAR(100) NOT NULL,
-    embedding_dim INT NOT NULL,
-    embedding vector(1024) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    embedding vector(1024) NOT NULL
 );
 
-CREATE INDEX idx_chunk_tenant ON document_chunk(tenant_id);
-CREATE INDEX idx_chunk_document ON document_chunk(document_id);
-CREATE INDEX idx_chunk_embedding ON document_chunk USING hnsw (embedding vector_cosine_ops);
+-- Indexes for tenant filtering and vector search
+CREATE INDEX idx_vector_tenant ON vector_store ((metadata->>'tenant_id'));
+CREATE INDEX idx_vector_embedding ON vector_store USING hnsw (embedding vector_cosine_ops);
 
 -- Comments for documentation
-COMMENT ON TABLE document IS 'Document metadata with tenant isolation';
-COMMENT ON TABLE document_chunk IS 'Document chunks with embeddings for RAG retrieval';
-COMMENT ON COLUMN document.acl_groups IS 'JSON array of group/role names that can access this document';
-COMMENT ON COLUMN document_chunk.source_type IS 'Source of content: text, vlm_ocr, or image_desc';
-COMMENT ON COLUMN document_chunk.embedding IS '1024-dimensional vector from text-embedding-v4';
+COMMENT ON TABLE document IS 'Document metadata with tenant isolation (for management)';
+COMMENT ON TABLE vector_store IS 'Vector store compatible with Spring AI PgVectorStore, with tenant filtering support';
+COMMENT ON COLUMN vector_store.metadata IS 'JSONB containing: tenant_id, document_id, owner_user_id, acl_groups, page_number, chunk_index, source_type, embedding_model, embedding_dim, source, file_name, content_type';
+COMMENT ON COLUMN vector_store.embedding IS '1024-dimensional vector from text-embedding-v4';

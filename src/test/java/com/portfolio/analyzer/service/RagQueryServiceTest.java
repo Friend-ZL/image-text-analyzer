@@ -127,13 +127,15 @@ class RagQueryServiceTest {
         Map<String, Object> metadata2 = new HashMap<>();
         metadata2.put("source", "doc2.txt");
         metadata2.put("tenant_id", "other-tenant");
+        metadata2.put("owner_user_id", "other-user");
         metadata2.put("file_name", "doc2.txt");
         metadata2.put("page_number", 1);
         Document doc2 = new Document("Other tenant content.", metadata2);
         doc2.getMetadata().put("distance", 0.15);
 
+        // Mock vectorStore to return only doc1 (tenant filtering in SQL)
         when(vectorStore.similaritySearch(any(SearchRequest.class)))
-                .thenReturn(Arrays.asList(doc1, doc2));
+                .thenReturn(Arrays.asList(doc1));
         when(aiClient.chat(anyString())).thenReturn("Answer based on context.");
 
         RagQueryResponse response = ragQueryService.queryWithContext(question);

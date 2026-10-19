@@ -20,6 +20,8 @@ public class RagConfig {
     private String chatModel = "qwen-plus";
     private String vlmModel = "qwen-vl-max";
     private int minTextLengthForOcr = 50;
+    private String embeddingModel = "text-embedding-v4";
+    private int embeddingDimensions = 1024;
     
     public long getMaxIngestSizeBytes() {
         return maxIngestSizeMb * 1024L * 1024L;

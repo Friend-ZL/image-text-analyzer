@@ -10,16 +10,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
  * RAG查询服务
  * 
  * <p>实现检索增强生成，支持多租户隔离和提示注入防护。
+ * 租户/ACL过滤在SQL WHERE子句中执行，在topK之前。
  * 
  * @since Stage 2 Refactor
  */
@@ -65,37 +68,42 @@ public class RagQueryService {
         
         long startTime = System.currentTimeMillis();
         
+        // 构建SQL WHERE过滤条件：tenant_id = ? AND (owner_user_id = ? OR acl_groups ?| userGroups)
+        Filter.Expression tenantFilter = buildTenantAclFilter(tenantId, userId, userGroups);
+        
         SearchRequest searchRequest = SearchRequest.query(question)
                 .withTopK(ragConfig.getTopK())
-                .withSimilarityThreshold(ragConfig.getSimilarityThreshold());
+                .withSimilarityThreshold(ragConfig.getSimilarityThreshold())
+                .withFilterExpression(tenantFilter);
         
-        List<Document> similarDocs = vectorStore.similaritySearch(searchRequest);
+        List<Document> relevantDocs = vectorStore.similaritySearch(searchRequest);
         
-        logger.info("Found {} similar documents", similarDocs.size());
-        
-        List<Document> relevantDocs = similarDocs.stream()
-                .filter(doc -> filterByTenantAndAcl(doc, tenantId, userId, userGroups))
-                .filter(doc -> extractSimilarity(doc).isPresent())
-                .collect(Collectors.toList());
-        
-        logger.info("Filtered to {} accessible documents", relevantDocs.size());
+        logger.info("Found {} accessible documents after tenant/ACL filtering", relevantDocs.size());
         
         if (relevantDocs.isEmpty()) {
             logger.info("No relevant documents found for tenant {}", tenantId);
             return buildEmptyResponse(startTime);
         }
         
-        List<String> docContents = relevantDocs.stream()
-                .map(Document::getContent)
-                .collect(Collectors.toList());
+        // 收集文档内容，构建安全prompt
+        List<String> docContents = new ArrayList<>();
+        for (int i = 0; i < relevantDocs.size(); i++) {
+            Document doc = relevantDocs.get(i);
+            String content = doc.getContent();
+            Integer pageNum = (Integer) doc.getMetadata().get("page_number");
+            String pageInfo = pageNum != null ? " (第" + pageNum + "页)" : "";
+            docContents.add("[数据块 " + (i + 1) + "]" + pageInfo + ": " + content);
+        }
         
         String prompt = PromptInjectionSanitizer.buildSecurePrompt(question, docContents);
         
+        logger.debug("Calling LLM with prompt length: {}", prompt.length());
         String answer = aiClient.chat(prompt);
         
-        List<RagQueryResponse.DocumentSource> sources = relevantDocs.stream()
-                .map(this::buildDocumentSource)
-                .collect(Collectors.toList());
+        List<RagQueryResponse.DocumentSource> sources = new ArrayList<>();
+        for (Document doc : relevantDocs) {
+            sources.add(buildDocumentSource(doc));
+        }
         
         long latencyMs = System.currentTimeMillis() - startTime;
         
@@ -110,30 +118,39 @@ public class RagQueryService {
     }
     
     /**
-     * 过滤：租户隔离 + ACL
+     * 构建租户和ACL过滤表达式
+     * 
+     * SQL: WHERE metadata->>'tenant_id' = tenantId 
+     *      AND (metadata->>'owner_user_id' = userId 
+     *           OR metadata->'acl_groups' ?| ARRAY['group1', 'group2'])
      */
-    private boolean filterByTenantAndAcl(Document doc, String tenantId, String userId, List<String> userGroups) {
-        String docTenantId = (String) doc.getMetadata().get("tenant_id");
+    private Filter.Expression buildTenantAclFilter(String tenantId, String userId, List<String> userGroups) {
+        FilterExpressionBuilder b = new FilterExpressionBuilder();
         
-        if (!tenantId.equals(docTenantId)) {
-            return false;
+        // tenant_id = tenantId (必须)
+        var tenantExpr = b.eq("tenant_id", tenantId);
+        
+        // ACL检查: owner_user_id = userId OR acl_groups contains any of userGroups
+        FilterExpressionBuilder.Op aclExpr;
+        if (userId != null && userGroups != null && !userGroups.isEmpty()) {
+            // (owner_user_id = userId OR acl_groups IN userGroups)
+            var ownerExpr = b.eq("owner_user_id", userId);
+            var groupsExpr = b.in("acl_groups", userGroups.toArray());
+            aclExpr = b.or(ownerExpr, groupsExpr);
+        } else if (userId != null) {
+            // 只有userId，没有groups
+            aclExpr = b.eq("owner_user_id", userId);
+        } else if (userGroups != null && !userGroups.isEmpty()) {
+            // 只有groups，没有userId
+            aclExpr = b.in("acl_groups", userGroups.toArray());
+        } else {
+            // 既没有userId也没有groups，只能看到公开文档
+            // 不设置ACL限制，只过滤tenant
+            return b.and(tenantExpr, b.eq("owner_user_id", userId != null ? userId : "")).build();
         }
         
-        return true;
-    }
-    
-    /**
-     * 提取相似度分数
-     */
-    private Optional<Double> extractSimilarity(Document doc) {
-        Object distanceObj = doc.getMetadata().get("distance");
-        if (distanceObj instanceof Number) {
-            double distance = ((Number) distanceObj).doubleValue();
-            double similarity = 1.0 - distance;
-            return Optional.of(similarity);
-        }
-        logger.warn("Document missing distance metadata, skipping");
-        return Optional.empty();
+        // tenant_id = ? AND (owner_user_id = ? OR acl_groups IN (?))
+        return b.and(tenantExpr, aclExpr).build();
     }
     
     /**
@@ -147,14 +164,32 @@ public class RagQueryService {
         
         Optional<Double> similarity = extractSimilarity(doc);
         
+        Object pageNumObj = doc.getMetadata().get("page_number");
+        Integer pageNumber = pageNumObj instanceof Number 
+                ? ((Number) pageNumObj).intValue() 
+                : null;
+        
         return new RagQueryResponse.DocumentSource(
                 excerpt,
                 (String) doc.getMetadata().get("source"),
                 (String) doc.getMetadata().get("file_name"),
-                (Integer) doc.getMetadata().get("page_number"),
+                pageNumber,
                 similarity.orElse(null),
                 (String) doc.getMetadata().get("content_type")
         );
+    }
+    
+    /**
+     * 提取相似度分数
+     */
+    private Optional<Double> extractSimilarity(Document doc) {
+        Object distanceObj = doc.getMetadata().get("distance");
+        if (distanceObj instanceof Number) {
+            double distance = ((Number) distanceObj).doubleValue();
+            double similarity = 1.0 - distance;
+            return Optional.of(similarity);
+        }
+        return Optional.empty();
     }
     
     /**

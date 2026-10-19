@@ -20,6 +20,7 @@ import java.util.*;
  * 文档入库服务
  * 
  * <p>实现文档的提取、切块、向量化和存储，支持多租户隔离。
+ * 所有租户/ACL信息存储在vector_store.metadata jsonb中。
  * 
  * @since Stage 2 Refactor
  */
@@ -27,8 +28,6 @@ import java.util.*;
 public class DocumentIngestionService {
     
     private static final Logger logger = LoggerFactory.getLogger(DocumentIngestionService.class);
-    private static final String EMBEDDING_MODEL = "text-embedding-v4";
-    private static final int EMBEDDING_DIM = 1024;
     
     private final VectorStore vectorStore;
     private final RagConfig ragConfig;
@@ -77,32 +76,49 @@ public class DocumentIngestionService {
         
         long startTime = System.currentTimeMillis();
         
+        // 提取和切块
         List<DocumentPage> pages = extractionService.extractPages(file);
         logger.info("Extracted {} pages from document {}", pages.size(), documentId);
         
         List<DocumentChunk> chunks = chunkingService.chunkPages(pages);
         logger.info("Created {} chunks from document {}", chunks.size(), documentId);
         
+        // 保存文档元数据
         saveDocumentMetadata(documentId, tenantId, userId, groups, file, source, pages.size(), chunks.size());
         
+        // 构建Spring AI Document对象，所有信息存储在metadata中
         List<Document> vectorDocuments = new ArrayList<>();
         for (DocumentChunk chunk : chunks) {
             Map<String, Object> metadata = new HashMap<>();
-            metadata.put("document_id", documentId);
+            
+            // 租户和ACL信息（用于SQL过滤）
             metadata.put("tenant_id", tenantId);
+            metadata.put("owner_user_id", userId);
+            if (groups != null && !groups.isEmpty()) {
+                metadata.put("acl_groups", groups);
+            }
+            
+            // 文档和块信息
+            metadata.put("document_id", documentId);
             metadata.put("page_number", chunk.getPageNumber());
             metadata.put("chunk_index", chunk.getChunkIndex());
             metadata.put("source_type", chunk.getSourceType().name().toLowerCase());
+            
+            // 来源信息
             metadata.put("source", source);
             metadata.put("file_name", file.getOriginalFilename());
             metadata.put("content_type", file.getContentType());
-            metadata.put("embedding_model", EMBEDDING_MODEL);
-            metadata.put("embedding_dim", EMBEDDING_DIM);
             
-            String chunkId = String.format("%s_%d_%d", documentId, chunk.getPageNumber(), chunk.getChunkIndex());
+            // Embedding信息
+            metadata.put("embedding_model", ragConfig.getEmbeddingModel());
+            metadata.put("embedding_dim", ragConfig.getEmbeddingDimensions());
+            
+            // 使用UUID作为ID
+            String chunkId = UUID.randomUUID().toString();
             vectorDocuments.add(new Document(chunkId, chunk.getContent(), metadata));
         }
         
+        // VectorStore会调用EmbeddingModel并插入vector_store表
         vectorStore.add(vectorDocuments);
         logger.info("Successfully stored {} chunks for document {}", vectorDocuments.size(), documentId);
         
@@ -135,9 +151,10 @@ public class DocumentIngestionService {
                 "file_size, source, page_count, total_chunks, embedding_model, embedding_dim) " +
                 "VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        String groupsJson = groups != null && !groups.isEmpty() 
-                ? "[" + String.join(",", groups.stream().map(g -> "\"" + g + "\"").toList()) + "]"
-                : null;
+        String groupsJson = null;
+        if (groups != null && !groups.isEmpty()) {
+            groupsJson = "[" + String.join(",", groups.stream().map(g -> "\"" + g + "\"").toList()) + "]";
+        }
         
         jdbcTemplate.update(sql,
                 UUID.fromString(documentId),
@@ -150,8 +167,8 @@ public class DocumentIngestionService {
                 source,
                 pageCount,
                 totalChunks,
-                EMBEDDING_MODEL,
-                EMBEDDING_DIM
+                ragConfig.getEmbeddingModel(),
+                ragConfig.getEmbeddingDimensions()
         );
         
         logger.debug("Saved document metadata: documentId={}", documentId);
@@ -164,8 +181,13 @@ public class DocumentIngestionService {
     public void deleteDocument(String documentId) {
         String tenantId = tenantContext.getTenantId();
         
+        // 删除document表记录（会级联删除vector_store中的记录，如果需要的话）
         String sql = "DELETE FROM document WHERE document_id = ? AND tenant_id = ?";
         int deleted = jdbcTemplate.update(sql, UUID.fromString(documentId), tenantId);
+        
+        // 删除vector_store中的记录
+        String vectorSql = "DELETE FROM vector_store WHERE metadata->>'document_id' = ? AND metadata->>'tenant_id' = ?";
+        jdbcTemplate.update(vectorSql, documentId, tenantId);
         
         if (deleted > 0) {
             logger.info("Deleted document: documentId={}, tenant={}", documentId, tenantId);

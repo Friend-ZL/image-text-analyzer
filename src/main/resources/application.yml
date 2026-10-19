@@ -24,7 +24,7 @@ spring:
         distance-type: COSINE_DISTANCE
         dimensions: 1024
         initialize-schema: false
-        table-name: document_chunk
+        table-name: vector_store
         schema-name: public
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analyzer_db}
@@ -57,6 +57,8 @@ app:
     chat-model: qwen-plus
     vlm-model: qwen-vl-max
     min-text-length-for-ocr: 50
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
 
 server:
   port: 8080
