@@ -1,0 +1,126 @@
+package com.portfolio.analyzer.util;
+
+import org.springframework.web.multipart.MultipartFile;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+
+/**
+ * 日志脱敏工具类
+ * <p>
+ * 功能：
+ * - question: 不记录原文，只记录长度
+ * - 文件名: 不记录原文，只记录扩展名、大小和内容哈希前 8 位
+ */
+public class LogSanitizer {
+    
+    /**
+     * 脱敏 question，只返回长度信息
+     * 
+     * @param question 用户问题
+     * @return 脱敏后的信息，例如 "[length=25]"
+     */
+    public static String sanitizeQuestion(String question) {
+        if (question == null) {
+            return "[null]";
+        }
+        return "[length=" + question.length() + "]";
+    }
+    
+    /**
+     * 脱敏文件信息，返回扩展名、大小和内容哈希前 8 位
+     * 
+     * @param file 上传文件
+     * @return 脱敏后的信息，例如 "[ext=.jpg, size=102400, hash=a1b2c3d4]"
+     */
+    public static String sanitizeFile(MultipartFile file) {
+        if (file == null) {
+            return "[null]";
+        }
+        
+        String filename = file.getOriginalFilename();
+        String extension = getFileExtension(filename);
+        long size = file.getSize();
+        String hashPrefix = "[error]";
+        
+        try {
+            byte[] content = file.getBytes();
+            hashPrefix = computeHashPrefix(content);
+        } catch (Exception e) {
+            // 如果获取内容失败，不计算哈希，直接输出 [error]
+            hashPrefix = "[error]";
+        }
+        
+        return String.format("[ext=%s, size=%d, hash=%s]", extension, size, hashPrefix);
+    }
+    
+    /**
+     * 脱敏文件名，返回扩展名
+     * 
+     * @param filename 文件名
+     * @param contentType 内容类型
+     * @return 脱敏后的信息，例如 "[ext=.jpg, type=image/jpeg]"
+     */
+    public static String sanitizeFilename(String filename, String contentType) {
+        String extension = getFileExtension(filename);
+        String sanitizedType = sanitizeContentType(contentType);
+        return String.format("[ext=%s, type=%s]", extension, sanitizedType);
+    }
+    
+    /**
+     * 脱敏 Content-Type（白名单）
+     * 白名单：1-100 位字母数字和常见分隔符
+     */
+    public static String sanitizeContentType(String contentType) {
+        if (contentType == null || contentType.isEmpty()) {
+            return "[unknown]";
+        }
+        
+        // 白名单验证：字母数字加 . + - /
+        if (contentType.matches("^[A-Za-z0-9.+/\\-]{1,100}$")) {
+            return contentType;
+        }
+        return "[other]";
+    }
+    
+    /**
+     * 获取文件扩展名（白名单）
+     * 白名单：1-10 位字母数字的扩展名
+     */
+    private static String getFileExtension(String filename) {
+        if (filename == null || filename.isEmpty()) {
+            return "[none]";
+        }
+        
+        int lastDot = filename.lastIndexOf('.');
+        if (lastDot > 0 && lastDot < filename.length() - 1) {
+            String ext = filename.substring(lastDot);
+            // 白名单验证：. + 1-10 位字母数字
+            if (ext.matches("^\\.[A-Za-z0-9]{1,10}$")) {
+                return ext;
+            }
+            return "[other]";
+        }
+        return "[none]";
+    }
+    
+    /**
+     * 计算内容的 SHA-256 哈希前 8 位
+     */
+    private static String computeHashPrefix(byte[] content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(content);
+            
+            // 取前 4 字节，转为 8 位 hex
+            StringBuilder sb = new StringBuilder(8);
+            for (int i = 0; i < 4 && i < hash.length; i++) {
+                sb.append(String.format("%02x", hash[i]));
+            }
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            return "[error]";
+        }
+    }
+}

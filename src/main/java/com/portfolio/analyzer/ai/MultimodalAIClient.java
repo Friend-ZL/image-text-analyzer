@@ -1,6 +1,9 @@
 package com.portfolio.analyzer.ai;
 
+import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.exception.AIServiceException;
+import com.portfolio.analyzer.exception.BusinessException;
+import com.portfolio.analyzer.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -59,14 +62,14 @@ public class MultimodalAIClient {
      */
     public String analyzeImages(List<byte[]> images, String question) {
         if (images == null || images.isEmpty()) {
-            throw new IllegalArgumentException("图片列表不能为空");
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "图片列表不能为空");
         }
         
         if (question == null || question.trim().isEmpty()) {
-            throw new IllegalArgumentException("问题不能为空");
+            throw new BusinessException(ErrorCode.QUESTION_EMPTY);
         }
         
-        logger.info("Analyzing {} image(s) with VLM", images.size());
+        logger.info("Analyzing {} image(s) with question: {}", images.size(), LogSanitizer.sanitizeQuestion(question));
         
         try {
             Media[] mediaArray = images.stream()
@@ -86,8 +89,9 @@ public class MultimodalAIClient {
             return response;
             
         } catch (Exception e) {
-            logger.error("Failed to analyze images with VLM", e);
-            throw new AIServiceException("VLM调用失败", e);
+            logger.error("Failed to analyze images with AI model: {}", e.getMessage(), e);
+            // 不透传上游错误信息，只返回固定错误码
+            throw new AIServiceException("模型服务调用失败", e);
         }
     }
     
@@ -116,7 +120,8 @@ public class MultimodalAIClient {
             return response;
             
         } catch (Exception e) {
-            logger.error("Failed to chat with text model", e);
+            logger.error("Failed to chat with text model: {}", e.getMessage(), e);
+            // 不透传上游错误信息
             throw new AIServiceException("文本模型调用失败", e);
         }
     }
@@ -129,4 +134,3 @@ public class MultimodalAIClient {
         return textModelName;
     }
 }
-

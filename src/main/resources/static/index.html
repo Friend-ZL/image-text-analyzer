@@ -367,18 +367,19 @@
                 hideError();
                 hideResult();
                 
-                const response = await fetch('/api/analyze', {
+                const response = await fetch('/api/v1/analyze', {
                     method: 'POST',
                     body: formData
                 });
                 
-                const data = await response.json();
+                const responseData = await response.json();
                 
                 if (!response.ok) {
-                    throw new Error(data.message || '分析失败');
+                    throw new Error(responseData.message || '分析失败');
                 }
                 
-                showResult(data);
+                // 统一响应体：提取 data 字段
+                showResult(responseData.data);
             } catch (err) {
                 showError(err.message || '请求失败，请检查网络连接');
             } finally {
