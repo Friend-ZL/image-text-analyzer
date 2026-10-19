@@ -1,0 +1,30 @@
+networks:
+  analyzer_network:
+    driver: bridge
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: image-text-analyzer-pgvector
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-analyzer_db}
+      POSTGRES_USER: ${POSTGRES_USER:-analyzer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analyzer -d analyzer_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - analyzer_network
+
+volumes:
+  pgvector_data:
+
+networks:
+  analyzer_network:
+    driver: bridge

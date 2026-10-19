@@ -57,7 +57,10 @@ public enum ErrorCode {
     // E50003~E50009 预留：内部错误相关
     
     // 存储服务相关 (E501xx)
-    // E50100~E50119 预留：文件存储、向量存储等服务异常，由后续 PR 填充
+    DOCUMENT_INGESTION_FAILED("E50101", "文档入库失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    EMBEDDING_GENERATION_FAILED("E50102", "向量生成失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    VECTOR_SEARCH_FAILED("E50103", "向量检索失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    // E50104~E50119 预留：文件存储、向量存储等服务异常，由后续 PR 填充
     
     // 上游服务异常 (E502xx)
     MODEL_ERROR("E50201", "模型服务异常", HttpStatus.BAD_GATEWAY),

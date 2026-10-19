@@ -2,6 +2,7 @@ package com.portfolio.analyzer.exception;
 
 import com.portfolio.analyzer.common.ApiResponse;
 import com.portfolio.analyzer.common.ErrorCode;
+import com.portfolio.analyzer.security.TenantMissingException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,20 @@ public class GlobalExceptionHandler {
     private String maxFileSize;
     
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+    
+    /**
+     * 处理租户信息缺失异常 -> 401 Unauthorized
+     * <p>当请求缺少X-Tenant-Id等必需头时抛出。
+     * BE-2将定义官方错误码E40102，这里暂用401。
+     */
+    @ExceptionHandler(TenantMissingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTenantMissing(TenantMissingException ex) {
+        logger.warn("Tenant missing: {}", ex.getMessage());
+        // TODO: BE-2 will define E40102, for now use generic INVALID_PARAMETER with 401
+        String traceId = MDC.get("traceId");
+        ApiResponse<Void> response = ApiResponse.error(ErrorCode.INVALID_PARAMETER, "租户信息缺失", traceId);
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
+    }
     
     /**
      * 处理业务异常
