@@ -3,10 +3,10 @@ package com.portfolio.analyzer.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.portfolio.analyzer.common.ErrorCode;
+import com.portfolio.analyzer.repository.VectorStorePort;
 import com.portfolio.analyzer.security.TenantContext;
 import com.portfolio.analyzer.security.TenantPrincipal;
 import com.portfolio.analyzer.service.DocumentAnalysisService;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -20,6 +20,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.util.LinkedMultiValueMap;
@@ -37,15 +38,12 @@ import static org.mockito.Mockito.when;
  * 验证 Spring 容器的 multipart 大小限制在请求到达业务层之前被拦截，正确返回 413 / E41301
  * 而不是被 MultipartException handler 拦截返回 400 / E40001
  */
-@Disabled("TODO: Fix Spring context configuration - needs DataSource/H2 setup. BE-1 test, will fix in follow-up")
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
         "spring.ai.openai.api-key=test-key",
         "spring.main.allow-bean-definition-overriding=true",
-        "spring.flyway.enabled=false",
-        "spring.datasource.url=jdbc:h2:mem:testdb",
-        "spring.datasource.driver-class-name=org.h2.Driver"
+        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"
     }
 )
 @TestPropertySource(properties = {
@@ -88,6 +86,18 @@ public class MaxUploadSizeIntegrationTest {
         public ChatClient.Builder testChatClientBuilder() {
             return mock(ChatClient.Builder.class);
         }
+        
+        @Bean
+        @Primary
+        public VectorStorePort testVectorStorePort() {
+            return mock(VectorStorePort.class);
+        }
+        
+        @Bean
+        @Primary
+        public JdbcTemplate testJdbcTemplate() {
+            return mock(JdbcTemplate.class);
+        }
     }
     
     @Autowired
@@ -100,7 +110,6 @@ public class MaxUploadSizeIntegrationTest {
     private DocumentAnalysisService analysisService;
     
     @Test
-    @Disabled("TODO: Fix Spring context - needs H2 driver or DataSource mock. Will fix in follow-up")
     void testMaxUploadSizeExceeded_ShouldReturn413FromContainer() throws Exception {
         // 创建一个超过 1KB 限制的文件（2KB）
         byte[] largeContent = new byte[2048];
