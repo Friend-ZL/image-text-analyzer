@@ -1,0 +1,176 @@
+services:
+  # ============================================
+  # PostgreSQL 16 with pgvector
+  # ============================================
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg16
+    container_name: analyzer-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - analyzer-network
+
+  # ============================================
+  # Redis 7
+  # ============================================
+  redis:
+    image: redis:8.8.3-alpine
+    container_name: analyzer-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - analyzer-network
+
+  # ============================================
+  # MinIO Object Storage
+  # 注意: MinIO 官方镜像在公开注册表中需要认证，暂时注释
+  # 如需使用，请：
+  #   1. 使用本地构建的 MinIO 镜像
+  #   2. 或使用私有注册表
+  #   3. 或等待 MinIO 提供公开镜像
+  # ============================================
+  # minio:
+  #   image: quay.io/minio/minio:latest
+  #   container_name: analyzer-minio
+  #   restart: unless-stopped
+  #   environment:
+  #     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  #     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "127.0.0.1:9000:9000"
+  #     - "127.0.0.1:9001:9001"
+  #   volumes:
+  #     - minio-data:/data
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 10s
+  #   networks:
+  #     - analyzer-network
+
+  # ============================================
+  # Keycloak (Identity and Access Management)
+  # ============================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8
+    container_name: analyzer-keycloak
+    restart: unless-stopped
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    command: start-dev
+    ports:
+      - "127.0.0.1:8180:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - analyzer-network
+
+  # ============================================
+  # Spring Boot Application
+  # ============================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: analyzer-app
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      # PostgreSQL 连接（暂时注释，Stage 2 会用到）
+      # SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      # SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      # SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      # Redis 连接（暂时注释，Stage 4 会用到）
+      # SPRING_REDIS_HOST: redis
+      # SPRING_REDIS_PORT: 6379
+      # SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # minio:
+      #   condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - analyzer-network
+
+# ============================================
+# 命名卷（数据持久化）
+# ============================================
+volumes:
+  postgres-data:
+    name: analyzer-postgres-data
+  redis-data:
+    name: analyzer-redis-data
+  # minio-data:
+  #   name: analyzer-minio-data
+  keycloak-data:
+    name: analyzer-keycloak-data
+
+# ============================================
+# 网络
+# ============================================
+networks:
+  analyzer-network:
+    name: analyzer-network
+    driver: bridge
+
+# ============================================
+# 使用说明
+# ============================================
+# 1. 启动所有服务（应用 + 依赖）:
+#    docker compose up -d
+#
+# 2. 仅启动依赖服务（方便 IDE 调试应用）:
+#    docker compose up -d postgres redis minio keycloak
+#    然后在 IDE 中启动 Spring Boot 应用
+#
+# 3. 查看日志:
+#    docker compose logs -f app
+#
+# 4. 停止所有服务:
+#    docker compose down
+#
+# 5. 停止并删除所有数据:
+#    docker compose down -v

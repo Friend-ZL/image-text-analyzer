@@ -18,10 +18,6 @@
 - ✅ 基于阿里云百炼 qwen-vl-max 视觉语言模型
 - ✅ OpenAI 兼容接口，可一键切换至 GPT-4o
 - ✅ 拖拽式上传的现代化前端界面
-- ✅ **企业级 API 规范**：统一响应体、错误码体系、请求追踪
-- ✅ **RESTful API 版本化**：`/api/v1/analyze`（当前），`/api/analyze`（已废弃但保留兼容）
-- ✅ **请求链路追踪**：每个请求自动生成 traceId，支持日志关联
-- ✅ **结构化日志**：JSON 格式日志（生产环境），可读格式（开发环境）
 - ✅ 完整的错误处理和参数验证
 - ✅ 单元测试和集成测试覆盖
 
@@ -118,6 +114,94 @@ mvn spring-boot:run
 
 在浏览器中打开：http://localhost:8080
 
+## 🐳 Docker 本地开发
+
+### 使用 Docker Compose 快速启动
+
+如果你更喜欢使用 Docker 进行本地开发，可以使用 docker-compose 一键启动所有服务（包括 PostgreSQL、Redis、MinIO、Keycloak）。
+
+#### 1. 复制环境变量模板
+
+```bash
+cp .env.example .env
+```
+
+#### 2. 编辑 .env 文件
+
+打开 `.env` 文件，至少需要设置：
+- `DASHSCOPE_API_KEY`：你的阿里云 DashScope API Key（必填）
+- 其他密码可以保持默认值（仅用于本地开发）
+
+#### 3. 启动所有服务
+
+```bash
+docker compose up -d
+```
+
+首次启动会构建应用镜像，可能需要几分钟时间。
+
+#### 4. 查看服务状态
+
+```bash
+docker compose ps
+```
+
+所有服务应该显示为 `healthy` 状态。
+
+#### 5. 访问应用
+
+- **应用界面**: http://localhost:8080
+- **MinIO Console**: http://localhost:9001（用户名/密码见 `.env`）
+- **Keycloak Admin**: http://localhost:8180（用户名/密码见 `.env`）
+
+#### 6. 查看日志
+
+```bash
+# 查看应用日志
+docker compose logs -f app
+
+# 查看所有服务日志
+docker compose logs -f
+```
+
+#### 7. 停止服务
+
+```bash
+docker compose down
+```
+
+### 仅启动依赖服务（便于 IDE 调试）
+
+如果你想在 IDE 中调试应用，可以只启动依赖服务：
+
+```bash
+# 只启动 PostgreSQL、Redis、MinIO、Keycloak
+docker compose up -d postgres redis minio keycloak
+
+# 在 IDE 中启动 Spring Boot 应用
+mvn spring-boot:run
+```
+
+这样可以方便地在 IDE 中设置断点和调试代码。
+
+### Docker 服务说明
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| 应用 | 8080 | Spring Boot 应用 |
+| PostgreSQL | 5432 | 数据库（带 pgvector 扩展，为 Stage 2 准备） |
+| Redis | 6379 | 缓存服务（为 Stage 4 准备） |
+| MinIO | 9000, 9001 | 对象存储（为未来文件存储准备） |
+| Keycloak | 8180 | 身份认证服务（为未来权限管理准备） |
+
+**注意**：所有端口都绑定到 `127.0.0.1`，仅本地访问，不会暴露到外网。
+
+## 📖 API 使用示例
+
+### 分析图片
+
+```bash
+curl -X POST http://localhost:8080/api/analyze \
 ## 📖 API 接口规范
 
 ### 接口概览
@@ -418,208 +502,3 @@ mvn verify
 **分层架构**：Controller → Service → AI Client，职责清晰
 - Controller：处理 HTTP 请求和参数验证
 - Service：业务逻辑协调
-- AI Client：封装 AI 模型调用
-
-**配置外部化**：模型名称、API 端点、文件限制等都可通过配置文件调整
-
-**接口抽象**：为后续阶段预留扩展点
-```java
-// Stage 2: RAG 扩展
-interface VectorStore {
-    void store(Document doc);
-    List<Document> search(String query);
-}
-
-// Stage 3: 工具调用扩展
-interface AgentTool {
-    String execute(Map<String, Object> params);
-}
-```
-
-### 5. 错误处理策略
-
-- **参数验证前置**：文件类型、大小在服务层提前验证
-- **统一异常处理**：GlobalExceptionHandler 返回标准 JSON 错误格式
-- **AI 调用容错**：Spring AI 内置超时和重试机制
-- **安全考虑**：API Key 仅从环境变量读取，错误信息脱敏
-
-### 6. 测试策略
-
-- **单元测试**：使用 Mockito 模拟依赖，测试业务逻辑
-- **集成测试**：使用 `@WebMvcTest` 测试 API 端点
-- **无 API Key 测试**：Mock AI 客户端，避免测试依赖外部服务
-
-## 📁 项目结构
-
-```
-image-text-analyzer/
-├── src/
-│   ├── main/
-│   │   ├── java/com/portfolio/analyzer/
-│   │   │   ├── AnalyzerApplication.java          # 启动类
-│   │   │   ├── config/
-│   │   │   │   └── AIConfig.java                # AI 配置
-│   │   │   ├── controller/
-│   │   │   │   └── AnalysisController.java      # API 控制器
-│   │   │   ├── service/
-│   │   │   │   ├── DocumentAnalysisService.java # 文档分析服务
-│   │   │   │   └── ImageProcessingService.java  # 图片处理服务
-│   │   │   ├── ai/
-│   │   │   │   └── MultimodalAIClient.java      # AI 客户端封装
-│   │   │   ├── dto/
-│   │   │   │   └── AnalysisResponse.java        # 响应 DTO
-│   │   │   └── exception/
-│   │   │       ├── GlobalExceptionHandler.java  # 全局异常处理
-│   │   │       ├── InvalidFileTypeException.java
-│   │   │       ├── FileSizeLimitException.java
-│   │   │       └── AIServiceException.java
-│   │   └── resources/
-│   │       ├── application.yml                   # 应用配置
-│   │       └── static/
-│   │           └── index.html                    # 前端页面
-│   └── test/
-│       ├── java/com/portfolio/analyzer/
-│       │   ├── service/
-│       │   │   ├── ImageProcessingServiceTest.java
-│       │   │   └── DocumentAnalysisServiceTest.java
-│       │   ├── ai/
-│       │   │   └── MultimodalAIClientTest.java
-│       │   ├── controller/
-│       │   │   └── AnalysisControllerTest.java
-│       │   └── TestDataGenerator.java           # 测试数据生成器
-│       └── resources/
-│           ├── test-data/                        # 测试数据
-│           └── application-test.yml              # 测试配置
-├── pom.xml
-├── .gitignore
-├── README.md
-└── 文档-多模态文档分析Agent设计.md          # 详细设计文档
-```
-
-## 🗺 开发路线图
-
-### Stage 2: 多模态 RAG（计划中）
-
-- [ ] 集成 PostgreSQL + pgvector 向量数据库
-- [ ] 实现文档分块和向量化（文本 + 图片）
-- [ ] 构建检索增强生成（RAG）流程
-- [ ] 添加历史对话管理
-
-**技术要点**：
-- 使用 Spring Data JPA + pgvector 扩展
-- 文本和图片混合向量检索
-- 相关性排序和重排序（Reranking）
-
-### Stage 3: Agent 工具调用（计划中）
-
-- [ ] OCR 工具：Tess4J 提取图片中的文字
-- [ ] 表格提取：识别表格结构并转为结构化数据
-- [ ] 计算器：处理数学表达式计算
-- [ ] 图表生成：根据数据生成可视化图表
-
-**技术要点**：
-- Spring AI 的 Function Calling 机制
-- 工具调用的可观测性（tracing）
-- 多工具协同决策
-
-### Stage 4: 评估与优化（计划中）
-
-- [ ] 构建测试集并评估准确率
-- [ ] 添加缓存机制（Redis）减少重复调用
-- [ ] 实现批处理提高吞吐量
-- [ ] 添加监控和日志（Prometheus + Grafana）
-- [ ] Docker 容器化和云部署
-
-**技术要点**：
-- 使用 LangSmith/Weights & Biases 进行评估
-- Redis 缓存策略
-- 容器化部署最佳实践
-
-## 🔐 安全说明
-
-- ⚠️ **切勿将 API Key 提交到代码仓库**
-- ✅ 始终使用环境变量或密钥管理服务
-- ✅ 文件上传限制：最大 10MB，仅支持图片和 PDF
-- ✅ 错误信息中不包含敏感信息（API Key、内部路径等）
-
-## 📝 配置说明
-
-### 核心配置项（application.yml）
-
-```yaml
-spring:
-  ai:
-    openai:
-      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # API 端点
-      api-key: ${DASHSCOPE_API_KEY}                                # API Key
-      chat:
-        options:
-          model: qwen-vl-max                                       # 模型名称
-          temperature: 0.7                                         # 温度参数
-
-app:
-  analysis:
-    max-pdf-pages: 10           # PDF 最大页数
-    max-file-size-mb: 10        # 文件最大大小（MB）
-    pdf-render-dpi: 150         # PDF 渲染 DPI
-```
-
-### 切换到 OpenAI GPT-4o
-
-修改 `application.yml`：
-
-```yaml
-spring:
-  ai:
-    openai:
-      base-url: https://api.openai.com/v1
-      api-key: ${OPENAI_API_KEY}
-      chat:
-        options:
-          model: gpt-4o
-```
-
-## 🔄 持续集成（CI）
-
-本项目使用 GitHub Actions 进行持续集成，确保代码质量和测试覆盖。
-
-### CI 流程
-
-- **触发条件**：
-  - Pull Request 到 `main` 分支
-  - 直接推送到 `main` 分支
-
-- **执行步骤**：
-  - JDK 17 (Temurin) 环境配置
-  - Maven 依赖缓存（加速构建）
-  - 运行单元测试（Surefire）和集成测试（Failsafe）
-  - 上传测试报告 artifacts
-  - 生成测试结果摘要
-
-- **API Key 安全性**：CI 环境使用假的 API Key（`ci-dummy-key-not-real`），不会调用真实的百炼/DashScope API。测试配置（`application-test.yml`）会将 API 端点指向不可达地址，确保测试不依赖外部服务。
-
-- **并发控制**：同一分支的新提交会自动取消旧的 CI 运行，节省资源。
-
-### 查看 CI 结果
-
-1. 访问 Pull Request 页面查看 "Checks" 选项卡
-2. 点击 "Details" 查看详细的测试日志
-3. 下载测试报告 artifacts 进行离线分析
-
-## 🤝 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-MIT License
-
-## 📧 联系方式
-
-- 项目作者：[您的名字]
-- 邮箱：[您的邮箱]
-- GitHub：[您的 GitHub]
-
----
-
-**⭐ 如果这个项目对你有帮助，请给一个 Star！**
