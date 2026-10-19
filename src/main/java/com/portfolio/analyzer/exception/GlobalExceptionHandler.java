@@ -169,12 +169,13 @@ public class GlobalExceptionHandler {
     }
     
     /**
-     * 处理非 multipart 请求（415）
+     * 处理 multipart 解析失败（400）
+     * 注意：MaxUploadSizeExceededException 是子类，会被专门的 handler 拦截返回 413
      */
     @ExceptionHandler(MultipartException.class)
     public ResponseEntity<ApiResponse<Void>> handleMultipartException(MultipartException ex) {
-        logger.error("Multipart request error: {}", ex.getMessage());
-        return buildErrorResponse(ErrorCode.UNSUPPORTED_FILE_TYPE, ErrorCode.UNSUPPORTED_FILE_TYPE.getMessage());
+        logger.error("Multipart parsing error: {}", ex.getMessage());
+        return buildErrorResponse(ErrorCode.INVALID_PARAMETER, ErrorCode.INVALID_PARAMETER.getMessage());
     }
     
     /**
