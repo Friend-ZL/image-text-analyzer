@@ -48,18 +48,13 @@ public class RagController {
     @PostMapping("/ingest")
     public ResponseEntity<?> ingestDocument(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "source", required = false, defaultValue = "upload") String source) {
+            @RequestParam(value = "source", required = false, defaultValue = "upload") String source) throws Exception {
         
-        try {
-            // 在entry层解析TenantPrincipal一次
-            TenantPrincipal principal = tenantContext.current();
-            
-            Map<String, Object> result = ingestionService.ingestDocument(principal, file, source);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Ingestion failed", "message", e.getMessage()));
-        }
+        // 在entry层解析TenantPrincipal一次
+        TenantPrincipal principal = tenantContext.current();
+        
+        Map<String, Object> result = ingestionService.ingestDocument(principal, file, source);
+        return ResponseEntity.ok(result);
     }
     
     /**

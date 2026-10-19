@@ -14,6 +14,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -81,7 +82,10 @@ public class JdbcVectorStorePort implements VectorStorePort {
             int topK,
             double similarityThreshold) {
         
-        // 配置HNSW参数（在事务中设置LOCAL变量）
+        // Set tenant context for RLS (empty hook for now, will use set_config in V3)
+        setTenantContext(principal.tenantId());
+        
+        // Configure HNSW parameters using set_config (transaction-local)
         configureHnswParameters();
         
         // 构建查询向量
@@ -126,6 +130,9 @@ public class JdbcVectorStorePort implements VectorStorePort {
         if (chunks.isEmpty()) {
             return 0;
         }
+        
+        // Set tenant context for RLS (empty hook for now, will use set_config in V3)
+        setTenantContext(principal.tenantId());
         
         String sql = """
                 INSERT INTO chunk (
@@ -180,6 +187,9 @@ public class JdbcVectorStorePort implements VectorStorePort {
     @Override
     @Transactional
     public int deleteChunksByDocument(TenantPrincipal principal, UUID docId) {
+        // Set tenant context for RLS
+        setTenantContext(principal.tenantId());
+        
         String sql = "DELETE FROM chunk WHERE tenant_id = ? AND doc_id = ?";
         
         int deleted = jdbcTemplate.update(sql, principal.tenantId(), docId);
@@ -190,8 +200,69 @@ public class JdbcVectorStorePort implements VectorStorePort {
         return deleted;
     }
     
+    @Override
+    @Transactional
+    public void updateDocumentAcl(TenantPrincipal principal, UUID docId, 
+                                   String ownerUserId, Set<String> aclGroups) {
+        // Set tenant context for RLS
+        setTenantContext(principal.tenantId());
+        
+        // Convert groups to SQL array
+        String[] groupsArray = aclGroups != null ? aclGroups.toArray(new String[0]) : new String[0];
+        
+        // Update document table
+        String docSql = """
+                UPDATE document 
+                SET owner_user_id = ?, acl_groups = ?
+                WHERE tenant_id = ? AND document_id = ?
+                """;
+        
+        int docUpdated = jdbcTemplate.update(docSql, ownerUserId, groupsArray, 
+                                              principal.tenantId(), docId);
+        
+        if (docUpdated == 0) {
+            logger.warn("Document not found for ACL update: tenant={}, doc={}", 
+                       principal.tenantId(), docId);
+            return;
+        }
+        
+        // Update all chunks for this document (synchronous, immediate effect)
+        String chunkSql = """
+                UPDATE chunk 
+                SET owner_user_id = ?, acl_groups = ?
+                WHERE tenant_id = ? AND doc_id = ?
+                """;
+        
+        int chunksUpdated = jdbcTemplate.update(chunkSql, ownerUserId, groupsArray,
+                                                 principal.tenantId(), docId);
+        
+        logger.info("Updated ACL: tenant={}, doc={}, owner={}, groups={}, chunks={}", 
+                   principal.tenantId(), docId, ownerUserId, aclGroups, chunksUpdated);
+    }
+    
     /**
-     * 配置HNSW查询参数
+     * 设置租户上下文（用于RLS）
+     * 
+     * <p>Empty hook for now. Backend will use this in V3 with RLS policies:
+     * <pre>
+     * SELECT set_config('app.tenant_id', ?, true)
+     * </pre>
+     * 
+     * <p>The set_config call must occur in the same transaction as the query,
+     * so this method relies on @Transactional being effective (no self-invocation).
+     * 
+     * @param tenantId tenant ID to set in transaction-local config
+     */
+    private void setTenantContext(String tenantId) {
+        // TODO (V3): Uncomment when RLS policies are added
+        // jdbcTemplate.queryForObject("SELECT set_config('app.tenant_id', ?, true)", String.class, tenantId);
+        
+        // For now, explicit WHERE tenant_id=? provides defense in depth
+        logger.trace("Tenant context: {} (RLS policies will be added in V3)", tenantId);
+    }
+    
+    /**
+     * 配置HNSW查询参数（使用set_config）
      * 
      * <p>在事务中设置LOCAL变量，仅影响当前事务：
      * <ul>
@@ -201,10 +272,19 @@ public class JdbcVectorStorePort implements VectorStorePort {
      */
     private void configureHnswParameters() {
         int efSearch = ragConfig.getHnswEfSearch();
-        jdbcTemplate.execute("SET LOCAL hnsw.ef_search = " + efSearch);
+        
+        // Use set_config for transaction-local settings (better than SET LOCAL for bind parameters)
+        jdbcTemplate.queryForObject(
+                "SELECT set_config('hnsw.ef_search', ?, true)", 
+                String.class, 
+                String.valueOf(efSearch)
+        );
         
         if (supportsIterativeScan) {
-            jdbcTemplate.execute("SET LOCAL hnsw.iterative_scan = relaxed_order");
+            jdbcTemplate.queryForObject(
+                    "SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true)",
+                    String.class
+            );
             logger.debug("HNSW configured: ef_search={}, iterative_scan=relaxed_order", efSearch);
         } else {
             logger.debug("HNSW configured: ef_search={}", efSearch);

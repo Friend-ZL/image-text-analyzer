@@ -1,6 +1,4 @@
 spring:
-  profiles:
-    active: test,dev
   ai:
     openai:
       api-key: test-key

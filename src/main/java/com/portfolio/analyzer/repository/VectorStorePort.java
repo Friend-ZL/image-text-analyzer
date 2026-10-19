@@ -3,6 +3,7 @@ package com.portfolio.analyzer.repository;
 import com.portfolio.analyzer.security.TenantPrincipal;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -105,13 +106,30 @@ public interface VectorStorePort {
     int upsertChunks(TenantPrincipal principal, List<ChunkData> chunks);
     
     /**
-     * 删除文档的所有chunks
-     * 
-     * <p>租户隔离：只删除 tenant_id = principal.tenantId() 且 doc_id = docId 的记录。
-     * 
-     * @param principal 租户主体
-     * @param docId 文档ID
-     * @return 删除的行数
+     * Delete all chunks for a document (within tenant boundary).
+     *
+     * @param principal Tenant context (tenant_id for WHERE clause)
+     * @param docId Document UUID
+     * @return Number of chunks deleted
      */
     int deleteChunksByDocument(TenantPrincipal principal, UUID docId);
+    
+    /**
+     * Update ACL for a document and all its chunks synchronously.
+     * 
+     * <p>Updates both document and chunk tables in one transaction:
+     * <ul>
+     *   <li>UPDATE document SET owner_user_id=?, acl_groups=? WHERE ...</li>
+     *   <li>UPDATE chunk SET owner_user_id=?, acl_groups=? WHERE tenant_id=? AND doc_id=?</li>
+     * </ul>
+     * 
+     * <p>After this method returns, searchSimilar will immediately reflect the new ACL
+     * (e.g., revoking a group means users in that group get 0 hits).
+     * 
+     * @param principal Tenant context
+     * @param docId Document UUID
+     * @param ownerUserId New owner (can be null)
+     * @param aclGroups New ACL groups (can be empty)
+     */
+    void updateDocumentAcl(TenantPrincipal principal, UUID docId, String ownerUserId, Set<String> aclGroups);
 }
