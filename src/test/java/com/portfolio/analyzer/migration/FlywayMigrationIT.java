@@ -22,10 +22,10 @@ import static org.junit.jupiter.api.Assertions.*;
  * Flyway 迁移集成测试
  * <p>
  * 使用 Testcontainers pgvector/pgvector:pg16 镜像测试 Flyway 迁移。
- * 如果 Docker 不可用，测试会被跳过（见 @Testcontainers 注解）。
+ * CI 环境（CI=true）必须有 Docker，否则测试失败。
  */
 @SpringBootTest
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = false)
 class FlywayMigrationIT {
     
     @Container
