@@ -60,7 +60,4 @@ logging:
   level:
     com.portfolio.analyzer: INFO
     org.springframework.ai: INFO
-<<<<<<< HEAD
     org.flywaydb: INFO
-=======
->>>>>>> origin/main

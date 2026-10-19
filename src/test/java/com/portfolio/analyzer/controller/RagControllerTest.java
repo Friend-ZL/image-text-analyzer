@@ -58,13 +58,14 @@ class RagControllerTest {
                 "file", "test.txt", "text/plain", "test content".getBytes()
         );
         
-        mockMvc.perform(multipart("/api/rag/ingest")
+        mockMvc.perform(multipart("/api/v1/rag/ingest")
                         .file(file)
                         .param("source", "test-source")
                         .header("X-Tenant-Id", "tenant-1")
                         .header("X-User-Id", "user-1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.documentId").value("doc-123"));
+                .andExpect(jsonPath("$.code").value("00000"))
+                .andExpect(jsonPath("$.data.documentId").value("doc-123"));
     }
     
     @Test
@@ -75,10 +76,10 @@ class RagControllerTest {
                 "file", "test.txt", "text/plain", "test".getBytes()
         );
         
-        mockMvc.perform(multipart("/api/rag/ingest")
+        mockMvc.perform(multipart("/api/v1/rag/ingest")
                         .file(file))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("TENANT_MISSING"));
+                .andExpect(jsonPath("$.code").value("E40001"));
     }
     
     @Test
@@ -96,26 +97,26 @@ class RagControllerTest {
         when(queryService.queryWithContext(any(TenantPrincipal.class), anyString()))
                 .thenReturn(response);
         
-        mockMvc.perform(post("/api/rag/query")
+        mockMvc.perform(post("/api/v1/rag/query")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Tenant-Id", "tenant-1")
                         .header("X-User-Id", "user-1")
                         .content("{\"question\": \"What is Spring AI?\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.answer").value("Answer to the question"))
-                .andExpect(jsonPath("$.model").value("qwen-plus"));
+                .andExpect(jsonPath("$.code").value("00000"))
+                .andExpect(jsonPath("$.data.answer").value("Answer to the question"))
+                .andExpect(jsonPath("$.data.model").value("qwen-plus"));
     }
     
     @Test
     void testQuery_MissingTenant() throws Exception {
         when(tenantContext.current()).thenThrow(new TenantMissingException("Missing X-Tenant-Id header"));
         
-        mockMvc.perform(post("/api/rag/query")
+        mockMvc.perform(post("/api/v1/rag/query")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"question\": \"test\"}"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.error").value("TENANT_MISSING"))
-                .andExpect(jsonPath("$.status").value(401));
+                .andExpect(jsonPath("$.code").value("E40001"));
     }
     
     @Test
@@ -126,10 +127,11 @@ class RagControllerTest {
         when(queryService.queryWithContext(any(TenantPrincipal.class), anyString()))
                 .thenThrow(new IllegalArgumentException("问题不能为空"));
         
-        mockMvc.perform(post("/api/rag/query")
+        mockMvc.perform(post("/api/v1/rag/query")
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Tenant-Id", "tenant-1")
                         .content("{\"question\": \"\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("E40001"));
     }
 }
