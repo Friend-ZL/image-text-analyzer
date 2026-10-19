@@ -3,7 +3,9 @@ package com.portfolio.analyzer.controller;
 import com.portfolio.analyzer.common.ApiResponse;
 import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.dto.AnalysisResponse;
+import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.service.DocumentAnalysisService;
+import com.portfolio.analyzer.util.LogSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -41,7 +43,7 @@ public class AnalysisController {
         validateParameters(file, question);
         
         logger.info("Received analysis request (v1): file={}, question={}", 
-            file.getOriginalFilename(), question);
+            LogSanitizer.sanitizeFile(file), LogSanitizer.sanitizeQuestion(question));
         
         AnalysisResponse data = analysisService.analyzeDocument(file, question);
         String traceId = MDC.get("traceId");
@@ -94,11 +96,11 @@ public class AnalysisController {
     
     private void validateParameters(MultipartFile file, String question) {
         if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("文件不能为空");
+            throw new BusinessException(ErrorCode.FILE_EMPTY);
         }
         
         if (question == null || question.trim().isEmpty()) {
-            throw new IllegalArgumentException("问题不能为空");
+            throw new BusinessException(ErrorCode.QUESTION_EMPTY);
         }
     }
 }

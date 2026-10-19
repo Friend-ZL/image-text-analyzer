@@ -25,27 +25,19 @@
         </encoder>
     </appender>
     
-    <!-- 开发环境：使用可读格式 -->
-    <springProfile name="default,dev">
-        <root level="INFO">
-            <appender-ref ref="CONSOLE_READABLE"/>
-        </root>
-        <logger name="com.portfolio.analyzer" level="DEBUG"/>
-    </springProfile>
-    
-    <!-- 测试环境：使用可读格式 -->
-    <springProfile name="test">
-        <root level="INFO">
-            <appender-ref ref="CONSOLE_READABLE"/>
-        </root>
-        <logger name="com.portfolio.analyzer" level="DEBUG"/>
-    </springProfile>
-    
     <!-- 生产环境：使用 JSON 格式 -->
     <springProfile name="prod">
         <root level="INFO">
             <appender-ref ref="CONSOLE_JSON"/>
         </root>
         <logger name="com.portfolio.analyzer" level="INFO"/>
+    </springProfile>
+    
+    <!-- 非生产环境（default, dev, test, staging 等）：使用可读格式 -->
+    <springProfile name="!prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE_READABLE"/>
+        </root>
+        <logger name="com.portfolio.analyzer" level="DEBUG"/>
     </springProfile>
 </configuration>

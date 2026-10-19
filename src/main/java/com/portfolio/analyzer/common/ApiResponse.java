@@ -1,13 +1,12 @@
 package com.portfolio.analyzer.common;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-
 /**
  * 统一响应体
+ * <p>
+ * 所有字段始终输出，包括 null 值，保持前端契约一致
  *
  * @param <T> 数据类型
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public class ApiResponse<T> {
     
     private String code;

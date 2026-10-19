@@ -11,22 +11,29 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
+import org.junit.jupiter.api.extension.ExtendWith;
 
+import java.net.SocketTimeoutException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
-import static org.hamcrest.Matchers.notNullValue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(AnalysisController.class)
+@ExtendWith(OutputCaptureExtension.class)
 class AnalysisControllerTest {
     
     @Autowired
@@ -64,11 +71,11 @@ class AnalysisControllerTest {
             .andExpect(jsonPath("$.data.answer").value("这是一张测试图片"))
             .andExpect(jsonPath("$.data.model").value("qwen-vl-max"))
             .andExpect(jsonPath("$.data.latencyMs").value(1000))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_WithCustomTraceId_ShouldPreserveIt() throws Exception {
+    void testAnalyzeV1_WithValidTraceparent_ShouldExtractTraceId() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
@@ -78,15 +85,119 @@ class AnalysisControllerTest {
         
         when(analysisService.analyzeDocument(any(), anyString())).thenReturn(response);
         
-        String customTraceId = "custom-trace-id-12345";
+        String expectedTraceId = "0af7651916cd43dd8448eb211c80319c";
+        String traceparent = "00-" + expectedTraceId + "-b7ad6b7169203331-01";
         
         mockMvc.perform(multipart("/api/v1/analyze")
                 .file(file)
                 .param("question", "test")
-                .header("X-Request-Id", customTraceId))
+                .header("traceparent", traceparent))
             .andExpect(status().isOk())
-            .andExpect(header().string("X-Trace-Id", customTraceId))
-            .andExpect(jsonPath("$.traceId").value(customTraceId));
+            .andExpect(header().string("X-Trace-Id", expectedTraceId))
+            .andExpect(jsonPath("$.traceId").value(expectedTraceId));
+    }
+    
+    @Test
+    void testAnalyzeV1_WithValidXRequestId_ShouldUseIt() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        Map<String, Object> metadata = new HashMap<>();
+        AnalysisResponse response = new AnalysisResponse("answer", "model", 1000L, metadata);
+        
+        when(analysisService.analyzeDocument(any(), anyString())).thenReturn(response);
+        
+        String requestId = "abc123def456";
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test")
+                .header("X-Request-Id", requestId))
+            .andExpect(status().isOk())
+            .andExpect(header().exists("X-Trace-Id"))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+    }
+    
+    @Test
+    void testAnalyzeV1_WithInvalidXRequestId_ShouldRegenerate() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        Map<String, Object> metadata = new HashMap<>();
+        AnalysisResponse response = new AnalysisResponse("answer", "model", 1000L, metadata);
+        
+        when(analysisService.analyzeDocument(any(), anyString())).thenReturn(response);
+        
+        // 测试超长 ID
+        String longId = "a".repeat(65);
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test")
+                .header("X-Request-Id", longId))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+        
+        // 测试包含非法字符（换行符）
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test")
+                .header("X-Request-Id", "test\r\nMalicious-Header: value"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+        
+        // 测试包含空格
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test")
+                .header("X-Request-Id", "test id with spaces"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+    }
+    
+    @Test
+    void testAnalyzeV1_WithAllZeroTraceId_ShouldRegenerate() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        Map<String, Object> metadata = new HashMap<>();
+        AnalysisResponse response = new AnalysisResponse("answer", "model", 1000L, metadata);
+        
+        when(analysisService.analyzeDocument(any(), anyString())).thenReturn(response);
+        
+        String invalidTraceparent = "00-00000000000000000000000000000000-b7ad6b7169203331-01";
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test")
+                .header("traceparent", invalidTraceparent))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.traceId").value(not("00000000000000000000000000000000")))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+    }
+    
+    @Test
+    void testAnalyzeV1_MDCAndLogging_ShouldContainTraceId(CapturedOutput output) throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        Map<String, Object> metadata = new HashMap<>();
+        AnalysisResponse response = new AnalysisResponse("answer", "model", 1000L, metadata);
+        
+        when(analysisService.analyzeDocument(any(), anyString())).thenReturn(response);
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isOk());
+        
+        // 验证日志中包含 traceId（格式：[traceId]）
+        assertThat(output.getOut()).containsPattern("\\[[0-9a-f]{32}\\]");
+        assertThat(output.getOut()).contains("Request:");
+        assertThat(output.getOut()).contains("Response:");
     }
     
     @Test
@@ -113,7 +224,7 @@ class AnalysisControllerTest {
     }
     
     @Test
-    void testAnalyzeV1_EmptyFile_ShouldReturnBadRequest() throws Exception {
+    void testAnalyzeV1_EmptyFile_ShouldReturnE40002() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[0]
         );
@@ -123,13 +234,14 @@ class AnalysisControllerTest {
                 .param("question", "这是什么?"))
             .andExpect(status().isBadRequest())
             .andExpect(header().exists("X-Trace-Id"))
-            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()))
-            .andExpect(jsonPath("$.message").value("文件不能为空"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.code").value(ErrorCode.FILE_EMPTY.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.FILE_EMPTY.getMessage()))
+            .andExpect(jsonPath("$.data").value(nullValue()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_EmptyQuestion_ShouldReturnBadRequest() throws Exception {
+    void testAnalyzeV1_EmptyQuestion_ShouldReturnE40003() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
@@ -139,13 +251,36 @@ class AnalysisControllerTest {
                 .param("question", ""))
             .andExpect(status().isBadRequest())
             .andExpect(header().exists("X-Trace-Id"))
-            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()))
-            .andExpect(jsonPath("$.message").value("问题不能为空"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.code").value(ErrorCode.QUESTION_EMPTY.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.QUESTION_EMPTY.getMessage()))
+            .andExpect(jsonPath("$.data").value(nullValue()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_InvalidFileType_ShouldReturnUnsupportedMediaType() throws Exception {
+    void testAnalyzeV1_MissingFileParameter_ShouldReturnE40001() throws Exception {
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .param("question", "test"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.INVALID_PARAMETER.getMessage()));
+    }
+    
+    @Test
+    void testAnalyzeV1_MissingQuestionParameter_ShouldReturnE40001() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.INVALID_PARAMETER.getMessage()));
+    }
+    
+    @Test
+    void testAnalyzeV1_InvalidFileType_ShouldReturnE41501() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.txt", "text/plain", new byte[]{1, 2, 3}
         );
@@ -159,18 +294,18 @@ class AnalysisControllerTest {
             .andExpect(status().isUnsupportedMediaType())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.UNSUPPORTED_FILE_TYPE.getCode()))
-            .andExpect(jsonPath("$.message").value("不支持的文件类型: text/plain"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.message").value(ErrorCode.UNSUPPORTED_FILE_TYPE.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_FileTooLarge_ShouldReturnPayloadTooLarge() throws Exception {
+    void testAnalyzeV1_FileTooLarge_ShouldReturnE41301() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "large.jpg", "image/jpeg", new byte[1024]
         );
         
         when(analysisService.analyzeDocument(any(), anyString()))
-            .thenThrow(new FileSizeLimitException("文件大小超过10MB限制"));
+            .thenThrow(new FileSizeLimitException("文件大小超过限制"));
         
         mockMvc.perform(multipart("/api/v1/analyze")
                 .file(file)
@@ -178,31 +313,40 @@ class AnalysisControllerTest {
             .andExpect(status().isPayloadTooLarge())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.FILE_TOO_LARGE.getCode()))
-            .andExpect(jsonPath("$.message").value("文件大小超过10MB限制"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.message").value(ErrorCode.FILE_TOO_LARGE.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_AIServiceError_ShouldReturnInternalError() throws Exception {
+    void testAnalyzeV1_AIServiceError_ShouldNotLeakUpstreamMessage() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
         
+        String upstreamErrorMessage = "Internal DashScope error: API key invalid, detailed stack trace...";
         when(analysisService.analyzeDocument(any(), anyString()))
-            .thenThrow(new AIServiceException("模型服务暂时不可用"));
+            .thenThrow(new AIServiceException("模型服务暂时不可用", new RuntimeException(upstreamErrorMessage)));
         
-        mockMvc.perform(multipart("/api/v1/analyze")
+        String responseBody = mockMvc.perform(multipart("/api/v1/analyze")
                 .file(file)
                 .param("question", "test"))
             .andExpect(status().isInternalServerError())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.AI_SERVICE_ERROR.getCode()))
-            .andExpect(jsonPath("$.message").value("模型服务暂时不可用"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.message").value(ErrorCode.AI_SERVICE_ERROR.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")))
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+        
+        // 验证响应中不包含上游错误信息
+        assertThat(responseBody).doesNotContain("DashScope");
+        assertThat(responseBody).doesNotContain("API key invalid");
+        assertThat(responseBody).doesNotContain("stack trace");
     }
     
     @Test
-    void testAnalyzeV1_ModelTimeout_ShouldReturnGatewayTimeout() throws Exception {
+    void testAnalyzeV1_ModelTimeout_ShouldReturnE50401() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
@@ -216,12 +360,12 @@ class AnalysisControllerTest {
             .andExpect(status().isGatewayTimeout())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.MODEL_TIMEOUT.getCode()))
-            .andExpect(jsonPath("$.message").value("模型调用超时"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.message").value(ErrorCode.MODEL_TIMEOUT.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_AIServiceWithTimeoutCause_ShouldReturnGatewayTimeout() throws Exception {
+    void testAnalyzeV1_AIServiceWithDirectTimeout_ShouldReturnE50401() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
@@ -238,12 +382,37 @@ class AnalysisControllerTest {
             .andExpect(status().isGatewayTimeout())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.MODEL_TIMEOUT.getCode()))
-            .andExpect(jsonPath("$.message").value("模型调用超时，请稍后重试"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.message").value(ErrorCode.MODEL_TIMEOUT.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
     }
     
     @Test
-    void testAnalyzeV1_UnexpectedException_ShouldReturnInternalError() throws Exception {
+    void testAnalyzeV1_AIServiceWithNestedTimeout_ShouldReturnE50401() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        // 测试嵌套两层的超时异常
+        SocketTimeoutException socketTimeout = new SocketTimeoutException("Read timed out");
+        RuntimeException wrapper1 = new RuntimeException("Wrapper 1", socketTimeout);
+        RuntimeException wrapper2 = new RuntimeException("Wrapper 2", wrapper1);
+        AIServiceException aiException = new AIServiceException("AI调用失败", wrapper2);
+        
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(aiException);
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isGatewayTimeout())
+            .andExpect(header().exists("X-Trace-Id"))
+            .andExpect(jsonPath("$.code").value(ErrorCode.MODEL_TIMEOUT.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.MODEL_TIMEOUT.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+    }
+    
+    @Test
+    void testAnalyzeV1_UnexpectedException_ShouldReturnE50001() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
@@ -257,13 +426,21 @@ class AnalysisControllerTest {
             .andExpect(status().isInternalServerError())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.INTERNAL_ERROR.getCode()))
-            .andExpect(jsonPath("$.message").value("处理请求时发生错误"))
-            .andExpect(jsonPath("$.traceId").value(notNullValue()));
+            .andExpect(jsonPath("$.message").value(ErrorCode.INTERNAL_ERROR.getMessage()))
+            .andExpect(jsonPath("$.traceId").value(matchesPattern("^[0-9a-f]{32}$")));
+    }
+    
+    @Test
+    void testAnalyzeV1_MethodNotAllowed_ShouldReturnE40001() throws Exception {
+        mockMvc.perform(get("/api/v1/analyze"))
+            .andExpect(status().isMethodNotAllowed())
+            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()))
+            .andExpect(jsonPath("$.message").value("不支持的请求方法"));
     }
     
     @Test
     void testHealth_ShouldReturnOK() throws Exception {
-        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/health"))
+        mockMvc.perform(get("/api/health"))
             .andExpect(status().isOk())
             .andExpect(header().exists("X-Trace-Id"))
             .andExpect(jsonPath("$.code").value(ErrorCode.SUCCESS.getCode()))

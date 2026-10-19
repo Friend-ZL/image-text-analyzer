@@ -2,6 +2,7 @@ package com.portfolio.analyzer.service;
 
 import com.portfolio.analyzer.ai.MultimodalAIClient;
 import com.portfolio.analyzer.dto.AnalysisResponse;
+import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.exception.InvalidFileTypeException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -104,7 +105,7 @@ class DocumentAnalysisServiceTest {
     
     @Test
     void testAnalyzeDocument_NullFile_ShouldThrowException() {
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(BusinessException.class, () -> {
             analysisService.analyzeDocument(null, "问题");
         });
     }
@@ -115,7 +116,7 @@ class DocumentAnalysisServiceTest {
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
         );
         
-        assertThrows(IllegalArgumentException.class, () -> {
+        assertThrows(BusinessException.class, () -> {
             analysisService.analyzeDocument(file, "");
         });
     }

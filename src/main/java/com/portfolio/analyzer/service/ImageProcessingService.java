@@ -1,6 +1,7 @@
 package com.portfolio.analyzer.service;
 
 import com.portfolio.analyzer.exception.InvalidFileTypeException;
+import com.portfolio.analyzer.util.LogSanitizer;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
@@ -36,7 +37,7 @@ public class ImageProcessingService {
      * 处理图片文件，返回图片字节数组列表
      */
     public List<byte[]> processImage(MultipartFile file) {
-        logger.info("Processing image file: {}, type: {}", file.getOriginalFilename(), file.getContentType());
+        logger.info("Processing image file: {}", LogSanitizer.sanitizeFilename(file.getOriginalFilename(), file.getContentType()));
         
         if (!isImageFile(file.getContentType())) {
             throw new InvalidFileTypeException("不支持的图片类型: " + file.getContentType());
@@ -46,7 +47,7 @@ public class ImageProcessingService {
             byte[] imageBytes = file.getBytes();
             return List.of(imageBytes);
         } catch (IOException e) {
-            logger.error("Failed to read image file: {}", file.getOriginalFilename(), e);
+            logger.error("Failed to read image file: {}", LogSanitizer.sanitizeFilename(file.getOriginalFilename(), file.getContentType()), e);
             throw new RuntimeException("读取图片文件失败", e);
         }
     }
@@ -55,7 +56,7 @@ public class ImageProcessingService {
      * 处理PDF文件，将每页渲染为图片
      */
     public List<byte[]> processPdf(MultipartFile file) {
-        logger.info("Processing PDF file: {}", file.getOriginalFilename());
+        logger.info("Processing PDF file: {}", LogSanitizer.sanitizeFilename(file.getOriginalFilename(), file.getContentType()));
         
         if (!isPdfFile(file.getContentType())) {
             throw new InvalidFileTypeException("不是PDF文件: " + file.getContentType());
@@ -83,7 +84,7 @@ public class ImageProcessingService {
             return images;
             
         } catch (IOException e) {
-            logger.error("Failed to process PDF file: {}", file.getOriginalFilename(), e);
+            logger.error("Failed to process PDF file: {}", LogSanitizer.sanitizeFilename(file.getOriginalFilename(), file.getContentType()), e);
             throw new RuntimeException("处理PDF文件失败: " + e.getMessage(), e);
         }
     }
