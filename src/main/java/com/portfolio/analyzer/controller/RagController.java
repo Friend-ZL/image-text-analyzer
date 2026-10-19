@@ -6,6 +6,7 @@ import com.portfolio.analyzer.dto.RagQueryResponse;
 import com.portfolio.analyzer.service.DocumentIngestionService;
 import com.portfolio.analyzer.service.RagQueryService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Size;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -14,7 +15,15 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.Map;
 
+/**
+ * RAG API 控制器
+ * 
+ * <p>提供文档入库和检索增强问答API。
+ * 
+ * @since Stage 2
+ */
 @RestController
 @RequestMapping("/api/rag")
 @Validated
@@ -41,28 +50,30 @@ public class RagController {
     @PostMapping("/ingest")
     public ResponseEntity<IngestResponse> ingestDocument(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("source") String source) throws IOException {
-        
-        if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("文件不能为空");
-        }
+            @RequestParam(value = "source", required = false) @Size(max = 128) String source) 
+            throws IOException {
         
         if (source == null || source.trim().isEmpty()) {
             source = file.getOriginalFilename();
         }
         
-        logger.info("Received ingest request: file={}, source={}", 
-                file.getOriginalFilename(), source);
+        logger.info("Received ingest request: file={}, size={}, source={}", 
+                file.getOriginalFilename(), file.getSize(), source);
         
-        long startTime = System.currentTimeMillis();
-        int chunksProcessed = ingestionService.ingestDocument(file, source);
-        long processingTime = System.currentTimeMillis() - startTime;
+        Map<String, Object> result = ingestionService.ingestDocument(file, source);
         
         IngestResponse response = new IngestResponse(
-                "文档入库成功",
-                chunksProcessed,
-                processingTime
+                (String) result.get("documentId"),
+                (Integer) result.get("pagesProcessed"),
+                (Integer) result.get("chunksProcessed"),
+                (Long) result.get("processingTimeMs")
         );
+        
+        logger.info("Ingest completed: documentId={}, pages={}, chunks={}, time={}ms",
+                response.getDocumentId(),
+                response.getPagesProcessed(),
+                response.getChunksProcessed(),
+                response.getProcessingTimeMs());
         
         return ResponseEntity.ok(response);
     }
@@ -77,15 +88,15 @@ public class RagController {
     public ResponseEntity<RagQueryResponse> queryWithRag(
             @Valid @RequestBody RagQueryRequest request) {
         
-        if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
-            throw new IllegalArgumentException("问题不能为空");
-        }
-        
-        logger.info("Received RAG query: question={}, conversationId={}", 
-                request.getQuestion(), request.getConversationId());
+        logger.info("Received RAG query: questionLength={}, conversationId={}", 
+                request.getQuestion().length(), request.getConversationId());
         
         RagQueryResponse response = queryService.queryWithContext(request.getQuestion());
+        
+        logger.info("RAG query completed: sources={}, latency={}ms",
+                response.getSources().size(), response.getLatencyMs());
         
         return ResponseEntity.ok(response);
     }
 }
+

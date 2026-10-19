@@ -1,17 +1,28 @@
 package com.portfolio.analyzer.exception;
 
+import com.portfolio.analyzer.exception.InvalidFileContentException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
+/**
+ * 全局异常处理器
+ * 
+ * @since Stage 1
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     
@@ -29,10 +40,40 @@ public class GlobalExceptionHandler {
         return buildErrorResponse(HttpStatus.BAD_REQUEST, "文件大小超限", ex.getMessage());
     }
     
+    @ExceptionHandler(InvalidFileContentException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidFileContent(InvalidFileContentException ex) {
+        logger.error("Invalid file content: {}", ex.getMessage());
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, "文件内容无效", ex.getMessage());
+    }
+    
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<Map<String, Object>> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
         logger.error("Upload size exceeded: {}", ex.getMessage());
         return buildErrorResponse(HttpStatus.BAD_REQUEST, "上传文件过大", "文件大小超过10MB限制");
+    }
+    
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingRequestPart(MissingServletRequestPartException ex) {
+        logger.error("Missing request part: {}", ex.getRequestPartName());
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, "缺少必填参数", 
+                "缺少必填参数: " + ex.getRequestPartName());
+    }
+    
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> handleMissingRequestParameter(
+            MissingServletRequestParameterException ex) {
+        logger.error("Missing request parameter: {}", ex.getParameterName());
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, "缺少必填参数", 
+                "缺少必填参数: " + ex.getParameterName());
+    }
+    
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidationErrors(MethodArgumentNotValidException ex) {
+        String errors = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getDefaultMessage)
+                .collect(Collectors.joining("; "));
+        logger.error("Validation error: {}", errors);
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, "参数验证失败", errors);
     }
     
     @ExceptionHandler(IllegalArgumentException.class)
@@ -41,16 +82,24 @@ public class GlobalExceptionHandler {
         return buildErrorResponse(HttpStatus.BAD_REQUEST, "参数错误", ex.getMessage());
     }
     
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, Object>> handleIllegalState(IllegalStateException ex) {
+        logger.error("Illegal state: {}", ex.getMessage());
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, "状态错误", ex.getMessage());
+    }
+    
     @ExceptionHandler(AIServiceException.class)
     public ResponseEntity<Map<String, Object>> handleAIServiceException(AIServiceException ex) {
         logger.error("AI service error: {}", ex.getMessage(), ex);
-        return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "AI服务错误", ex.getMessage());
+        return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, 
+                "AI服务错误", "模型调用失败，请稍后重试");
     }
     
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGenericException(Exception ex) {
         logger.error("Unexpected error: {}", ex.getMessage(), ex);
-        return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "服务器内部错误", "处理请求时发生错误");
+        return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, 
+                "服务器内部错误", "处理请求时发生错误");
     }
     
     private ResponseEntity<Map<String, Object>> buildErrorResponse(
@@ -63,3 +112,4 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(status).body(response);
     }
 }
+

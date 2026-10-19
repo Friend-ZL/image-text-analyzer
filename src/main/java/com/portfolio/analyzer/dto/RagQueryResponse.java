@@ -5,7 +5,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
-import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -16,13 +15,42 @@ public class RagQueryResponse {
     private String model;
     private long latencyMs;
     
+    /**
+     * 文档来源（白名单字段）
+     */
     @Data
     @NoArgsConstructor
     @AllArgsConstructor
     public static class DocumentSource {
-        private String content;
+        /**
+         * 文档片段内容（摘录）
+         */
+        private String excerpt;
+        
+        /**
+         * 文档来源标识
+         */
         private String source;
-        private double similarity;
-        private Map<String, Object> metadata;
+        
+        /**
+         * 文件名
+         */
+        private String fileName;
+        
+        /**
+         * 页码
+         */
+        private Integer pageNumber;
+        
+        /**
+         * 相似度分数（0-1）
+         */
+        private Double similarity;
+        
+        /**
+         * 内容类型
+         */
+        private String contentType;
     }
 }
+

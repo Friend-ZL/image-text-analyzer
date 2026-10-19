@@ -15,4 +15,13 @@ public class RagConfig {
     private int chunkOverlap = 50;
     private int topK = 3;
     private double similarityThreshold = 0.7;
+    private int maxIngestSizeMb = 10;
+    private int maxPdfPages = 50;
+    private String chatModel = "qwen-plus";
+    private String vlmModel = "qwen-vl-max";
+    private int minTextLengthForOcr = 50;
+    
+    public long getMaxIngestSizeBytes() {
+        return maxIngestSizeMb * 1024L * 1024L;
+    }
 }

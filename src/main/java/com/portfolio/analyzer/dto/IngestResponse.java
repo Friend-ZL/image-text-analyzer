@@ -8,7 +8,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class IngestResponse {
-    private String message;
+    private String documentId;
+    private int pagesProcessed;
     private int chunksProcessed;
     private long processingTimeMs;
 }

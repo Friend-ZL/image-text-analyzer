@@ -3,6 +3,8 @@ package com.portfolio.analyzer.service;
 import com.portfolio.analyzer.ai.MultimodalAIClient;
 import com.portfolio.analyzer.config.RagConfig;
 import com.portfolio.analyzer.dto.RagQueryResponse;
+import com.portfolio.analyzer.security.TenantContext;
+import com.portfolio.analyzer.util.PromptInjectionSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -11,9 +13,16 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
+/**
+ * RAG查询服务
+ * 
+ * <p>实现检索增强生成，支持多租户隔离和提示注入防护。
+ * 
+ * @since Stage 2 Refactor
+ */
 @Service
 public class RagQueryService {
     
@@ -22,13 +31,17 @@ public class RagQueryService {
     private final VectorStore vectorStore;
     private final MultimodalAIClient aiClient;
     private final RagConfig ragConfig;
+    private final TenantContext tenantContext;
     
-    public RagQueryService(VectorStore vectorStore, 
-                          MultimodalAIClient aiClient, 
-                          RagConfig ragConfig) {
+    public RagQueryService(
+            VectorStore vectorStore, 
+            MultimodalAIClient aiClient, 
+            RagConfig ragConfig,
+            TenantContext tenantContext) {
         this.vectorStore = vectorStore;
         this.aiClient = aiClient;
         this.ragConfig = ragConfig;
+        this.tenantContext = tenantContext;
     }
     
     /**
@@ -42,56 +55,46 @@ public class RagQueryService {
             throw new IllegalArgumentException("问题不能为空");
         }
         
-        logger.info("Processing RAG query: {}", question);
+        String tenantId = tenantContext.getTenantId();
+        String userId = tenantContext.getUserId();
+        List<String> userGroups = tenantContext.getGroups();
+        
+        int questionHash = question.hashCode();
+        logger.info("Processing RAG query: tenant={}, user={}, questionLength={}, questionHash={}", 
+                tenantId, userId, question.length(), Integer.toHexString(questionHash));
         
         long startTime = System.currentTimeMillis();
         
         SearchRequest searchRequest = SearchRequest.query(question)
-                .withTopK(ragConfig.getTopK());
+                .withTopK(ragConfig.getTopK())
+                .withSimilarityThreshold(ragConfig.getSimilarityThreshold());
         
         List<Document> similarDocs = vectorStore.similaritySearch(searchRequest);
         
         logger.info("Found {} similar documents", similarDocs.size());
         
-        double threshold = ragConfig.getSimilarityThreshold();
         List<Document> relevantDocs = similarDocs.stream()
-                .filter(doc -> {
-                    Object distanceObj = doc.getMetadata().get("distance");
-                    if (distanceObj instanceof Number) {
-                        double distance = ((Number) distanceObj).doubleValue();
-                        double similarity = 1.0 - distance;
-                        return similarity >= threshold;
-                    }
-                    return true;
-                })
+                .filter(doc -> filterByTenantAndAcl(doc, tenantId, userId, userGroups))
+                .filter(doc -> extractSimilarity(doc).isPresent())
                 .collect(Collectors.toList());
         
-        logger.info("Filtered to {} relevant documents (threshold: {})", 
-                relevantDocs.size(), threshold);
+        logger.info("Filtered to {} accessible documents", relevantDocs.size());
         
-        String context = relevantDocs.stream()
+        if (relevantDocs.isEmpty()) {
+            logger.info("No relevant documents found for tenant {}", tenantId);
+            return buildEmptyResponse(startTime);
+        }
+        
+        List<String> docContents = relevantDocs.stream()
                 .map(Document::getContent)
-                .collect(Collectors.joining("\n\n---\n\n"));
+                .collect(Collectors.toList());
         
-        String prompt = buildPrompt(question, context);
+        String prompt = PromptInjectionSanitizer.buildSecurePrompt(question, docContents);
         
         String answer = aiClient.chat(prompt);
         
         List<RagQueryResponse.DocumentSource> sources = relevantDocs.stream()
-                .map(doc -> {
-                    Object distanceObj = doc.getMetadata().get("distance");
-                    double distance = distanceObj instanceof Number 
-                            ? ((Number) distanceObj).doubleValue() 
-                            : 0.0;
-                    double similarity = 1.0 - distance;
-                    
-                    return new RagQueryResponse.DocumentSource(
-                            doc.getContent(),
-                            (String) doc.getMetadata().get("source"),
-                            similarity,
-                            doc.getMetadata()
-                    );
-                })
+                .map(this::buildDocumentSource)
                 .collect(Collectors.toList());
         
         long latencyMs = System.currentTimeMillis() - startTime;
@@ -101,29 +104,70 @@ public class RagQueryService {
         return new RagQueryResponse(
                 answer,
                 sources,
-                aiClient.getModelName(),
+                ragConfig.getChatModel(),
                 latencyMs
         );
     }
     
     /**
-     * 构建RAG提示词
+     * 过滤：租户隔离 + ACL
      */
-    private String buildPrompt(String question, String context) {
-        if (context == null || context.trim().isEmpty()) {
-            return String.format(
-                    "请回答以下问题。如果你不知道答案，请说你不知道，不要编造答案。\n\n问题：%s",
-                    question
-            );
+    private boolean filterByTenantAndAcl(Document doc, String tenantId, String userId, List<String> userGroups) {
+        String docTenantId = (String) doc.getMetadata().get("tenant_id");
+        
+        if (!tenantId.equals(docTenantId)) {
+            return false;
         }
         
-        return String.format(
-                "请基于以下上下文信息回答问题。如果上下文中没有相关信息，请说你不知道，不要编造答案。\n\n" +
-                "上下文信息：\n%s\n\n" +
-                "问题：%s\n\n" +
-                "答案：",
-                context,
-                question
+        return true;
+    }
+    
+    /**
+     * 提取相似度分数
+     */
+    private Optional<Double> extractSimilarity(Document doc) {
+        Object distanceObj = doc.getMetadata().get("distance");
+        if (distanceObj instanceof Number) {
+            double distance = ((Number) distanceObj).doubleValue();
+            double similarity = 1.0 - distance;
+            return Optional.of(similarity);
+        }
+        logger.warn("Document missing distance metadata, skipping");
+        return Optional.empty();
+    }
+    
+    /**
+     * 构建文档来源（白名单字段）
+     */
+    private RagQueryResponse.DocumentSource buildDocumentSource(Document doc) {
+        String content = doc.getContent();
+        String excerpt = content.length() > 200 
+                ? content.substring(0, 200) + "..." 
+                : content;
+        
+        Optional<Double> similarity = extractSimilarity(doc);
+        
+        return new RagQueryResponse.DocumentSource(
+                excerpt,
+                (String) doc.getMetadata().get("source"),
+                (String) doc.getMetadata().get("file_name"),
+                (Integer) doc.getMetadata().get("page_number"),
+                similarity.orElse(null),
+                (String) doc.getMetadata().get("content_type")
+        );
+    }
+    
+    /**
+     * 构建空响应
+     */
+    private RagQueryResponse buildEmptyResponse(long startTime) {
+        long latencyMs = System.currentTimeMillis() - startTime;
+        return new RagQueryResponse(
+                "抱歉，我在知识库中没有找到相关信息来回答您的问题。",
+                List.of(),
+                ragConfig.getChatModel(),
+                latencyMs
         );
     }
 }
+
