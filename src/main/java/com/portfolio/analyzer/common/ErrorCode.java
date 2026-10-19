@@ -29,6 +29,14 @@ public enum ErrorCode {
     // 鉴权相关 (E403xx)
     // E40300~E40319 预留：鉴权、权限相关错误，由后续 PR 填充
     
+    // 资源不存在 (E404xx)
+    NOT_FOUND("E40401", "请求的资源不存在", HttpStatus.NOT_FOUND),
+    // E40402~E40409 预留：资源不存在相关
+    
+    // 方法不允许 (E405xx)
+    METHOD_NOT_ALLOWED("E40501", "不支持的请求方法", HttpStatus.METHOD_NOT_ALLOWED),
+    // E40502~E40509 预留：方法不允许相关
+    
     // 文件大小 (E413xx)
     FILE_TOO_LARGE("E41301", "文件大小超过限制", HttpStatus.PAYLOAD_TOO_LARGE),
     // E41302~E41309 预留：文件大小相关

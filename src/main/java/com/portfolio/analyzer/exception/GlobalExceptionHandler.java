@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -171,14 +172,17 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
-        logger.error("Method not supported: {}", ex.getMethod());
-        String traceId = MDC.get("traceId");
-        ApiResponse<Void> response = ApiResponse.error(
-            ErrorCode.INVALID_PARAMETER, 
-            "不支持的请求方法", 
-            traceId
-        );
-        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(response);
+        logger.error("Method not supported: {} for {}", ex.getMethod(), ex.getSupportedHttpMethods());
+        
+        HttpHeaders headers = new HttpHeaders();
+        if (ex.getSupportedHttpMethods() != null && !ex.getSupportedHttpMethods().isEmpty()) {
+            headers.setAllow(ex.getSupportedHttpMethods());
+        }
+        
+        return ResponseEntity
+                .status(ErrorCode.METHOD_NOT_ALLOWED.getHttpStatus())
+                .headers(headers)
+                .body(buildErrorResponse(ErrorCode.METHOD_NOT_ALLOWED, ErrorCode.METHOD_NOT_ALLOWED.getMessage()).getBody());
     }
     
     /**
@@ -187,13 +191,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
     public ResponseEntity<ApiResponse<Void>> handleNotFound(Exception ex) {
         logger.error("Resource not found: {}", ex.getMessage());
-        String traceId = MDC.get("traceId");
-        ApiResponse<Void> response = ApiResponse.error(
-            ErrorCode.INVALID_PARAMETER, 
-            "请求的资源不存在", 
-            traceId
-        );
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
+        return buildErrorResponse(ErrorCode.NOT_FOUND, ErrorCode.NOT_FOUND.getMessage());
     }
     
     /**
@@ -207,20 +205,61 @@ public class GlobalExceptionHandler {
     
     /**
      * 遍历整条异常链，检查是否包含超时异常
+     * <p>
+     * 只认明确的超时类型：
+     * - java.util.concurrent.TimeoutException
+     * - java.net.SocketTimeoutException
+     * - java.net.http.HttpTimeoutException（含 HttpConnectTimeoutException）
+     * - io.netty.handler.timeout.ReadTimeoutException（仅在 classpath 存在时）
+     * <p>
+     * 防止循环引用，限制最大遍历深度
      */
     private boolean isTimeoutException(Throwable throwable) {
+        // Netty ReadTimeoutException（仅在 classpath 存在时检查）
+        final boolean hasNettyTimeout = isClassPresent("io.netty.handler.timeout.ReadTimeoutException");
+        
         Throwable current = throwable;
-        while (current != null) {
-            if (current instanceof TimeoutException || current instanceof SocketTimeoutException) {
+        int depth = 0;
+        final int MAX_DEPTH = 50; // 防止循环引用
+        
+        while (current != null && depth < MAX_DEPTH) {
+            // 明确的超时类型
+            if (current instanceof TimeoutException) {
                 return true;
             }
-            // 检查类名是否包含 Timeout（处理第三方库的超时异常）
-            if (current.getClass().getSimpleName().contains("Timeout")) {
+            if (current instanceof SocketTimeoutException) {
                 return true;
             }
+            
+            // java.net.http.HttpTimeoutException（Java 11+）
+            String className = current.getClass().getName();
+            if ("java.net.http.HttpTimeoutException".equals(className) ||
+                "java.net.http.HttpConnectTimeoutException".equals(className)) {
+                return true;
+            }
+            
+            // Netty ReadTimeoutException（仅在 classpath 存在时）
+            if (hasNettyTimeout && "io.netty.handler.timeout.ReadTimeoutException".equals(className)) {
+                return true;
+            }
+            
             current = current.getCause();
+            depth++;
         }
+        
         return false;
+    }
+    
+    /**
+     * 检查类是否在 classpath 中存在
+     */
+    private boolean isClassPresent(String className) {
+        try {
+            Class.forName(className, false, getClass().getClassLoader());
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
     }
     
     private ResponseEntity<ApiResponse<Void>> buildErrorResponse(ErrorCode errorCode, String message) {

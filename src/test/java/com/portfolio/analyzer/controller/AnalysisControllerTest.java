@@ -412,6 +412,74 @@ class AnalysisControllerTest {
     }
     
     @Test
+    void testAnalyzeV1_CustomTimeoutException_ShouldReturnE50201() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        // 自定义超时异常（类名包含 Timeout 但不是明确的超时类型）
+        class CustomConnectionTimeout extends RuntimeException {
+            public CustomConnectionTimeout(String message) {
+                super(message);
+            }
+        }
+        
+        CustomConnectionTimeout customTimeout = new CustomConnectionTimeout("Custom timeout");
+        AIServiceException aiException = new AIServiceException("AI调用失败", customTimeout);
+        
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(aiException);
+        
+        // 应该返回 E50002（AI服务调用失败），而不是 E50401（模型超时）
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.code").value(ErrorCode.AI_SERVICE_ERROR.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.AI_SERVICE_ERROR.getMessage()));
+    }
+    
+    @Test
+    void testAnalyzeV1_JavaUtilTimeoutException_ShouldReturnE50401() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        // java.util.concurrent.TimeoutException
+        TimeoutException timeoutEx = new TimeoutException("Operation timed out");
+        AIServiceException aiException = new AIServiceException("AI调用失败", timeoutEx);
+        
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(aiException);
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isGatewayTimeout())
+            .andExpect(jsonPath("$.code").value(ErrorCode.MODEL_TIMEOUT.getCode()));
+    }
+    
+    @Test
+    void testAnalyzeV1_SocketTimeoutException_ShouldReturnE50401() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+            "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
+        );
+        
+        // java.net.SocketTimeoutException
+        SocketTimeoutException socketTimeout = new SocketTimeoutException("Read timed out");
+        AIServiceException aiException = new AIServiceException("AI调用失败", socketTimeout);
+        
+        when(analysisService.analyzeDocument(any(), anyString()))
+            .thenThrow(aiException);
+        
+        mockMvc.perform(multipart("/api/v1/analyze")
+                .file(file)
+                .param("question", "test"))
+            .andExpect(status().isGatewayTimeout())
+            .andExpect(jsonPath("$.code").value(ErrorCode.MODEL_TIMEOUT.getCode()));
+    }
+    
+    @Test
     void testAnalyzeV1_UnexpectedException_ShouldReturnE50001() throws Exception {
         MockMultipartFile file = new MockMultipartFile(
             "file", "test.jpg", "image/jpeg", new byte[]{1, 2, 3}
@@ -431,11 +499,21 @@ class AnalysisControllerTest {
     }
     
     @Test
-    void testAnalyzeV1_MethodNotAllowed_ShouldReturnE40001() throws Exception {
+    void testAnalyzeV1_MethodNotAllowed_ShouldReturnE40501WithAllowHeader() throws Exception {
         mockMvc.perform(get("/api/v1/analyze"))
             .andExpect(status().isMethodNotAllowed())
-            .andExpect(jsonPath("$.code").value(ErrorCode.INVALID_PARAMETER.getCode()))
-            .andExpect(jsonPath("$.message").value("不支持的请求方法"));
+            .andExpect(header().exists("Allow"))
+            .andExpect(header().string("Allow", containsString("POST")))
+            .andExpect(jsonPath("$.code").value(ErrorCode.METHOD_NOT_ALLOWED.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.METHOD_NOT_ALLOWED.getMessage()));
+    }
+    
+    @Test
+    void testNotFoundResource_ShouldReturnE40401() throws Exception {
+        mockMvc.perform(get("/api/v1/nonexistent"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value(ErrorCode.NOT_FOUND.getCode()))
+            .andExpect(jsonPath("$.message").value(ErrorCode.NOT_FOUND.getMessage()));
     }
     
     @Test
