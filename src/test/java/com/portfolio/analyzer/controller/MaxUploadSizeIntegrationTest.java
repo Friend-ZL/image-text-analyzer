@@ -3,6 +3,7 @@ package com.portfolio.analyzer.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.portfolio.analyzer.common.ErrorCode;
+import com.portfolio.analyzer.security.TestJwtSupport;
 import com.portfolio.analyzer.service.DocumentAnalysisService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,8 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
-        "spring.ai.openai.api-key=test-key",
-        "spring.main.allow-bean-definition-overriding=true"
+        "spring.ai.openai.api-key=test-key"
     }
 )
 @TestPropertySource(properties = {
@@ -58,6 +58,7 @@ public class MaxUploadSizeIntegrationTest {
         // 构造 multipart 请求
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        headers.setBearerAuth(TestJwtSupport.bearerToken());
         
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(largeContent) {

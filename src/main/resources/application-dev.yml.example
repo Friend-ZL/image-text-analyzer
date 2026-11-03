@@ -1,0 +1,27 @@
+# 开发环境配置示例
+# 复制为 src/main/resources/application-dev.yml 后按需修改。
+#
+# 不要在这个 profile 专用文件里设置 spring.profiles.active。
+# profile 文件不能用来激活自己；启动时设置 SPRING_PROFILES_ACTIVE=dev 或 local。
+#
+# dev/local 只允许本机数据源（localhost、127.0.0.1、::1，或内嵌 H2）。
+# 与 prod/production 同时激活，或 DATABASE_URL 指向远程主机，应用会拒绝启动。
+
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_dev}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+
+  jpa:
+    show-sql: true
+
+# dev/local 不校验 JWT，身份来自请求头（DevTenantContext）。
+
+logging:
+  level:
+    com.portfolio.analyzer: DEBUG
+    org.springframework.security: DEBUG
