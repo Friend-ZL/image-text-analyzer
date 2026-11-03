@@ -32,20 +32,20 @@ public class CustomAuthenticationEntryPoint implements AuthenticationEntryPoint 
     public void commence(HttpServletRequest request,
                          HttpServletResponse response,
                          AuthenticationException authException) throws IOException, ServletException {
-        
+        write(response, ErrorCode.UNAUTHORIZED);
+    }
+
+    public void write(HttpServletResponse response, ErrorCode errorCode) throws IOException {
         String traceId = MDC.get("traceId");
-        ErrorCode errorCode = ErrorCode.UNAUTHORIZED;
-        
         ApiResponse<Void> apiResponse = ApiResponse.error(
             errorCode,
             errorCode.getMessage(),
             traceId
         );
-        
+
         response.setStatus(errorCode.getHttpStatus().value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        
         objectMapper.writeValue(response.getWriter(), apiResponse);
     }
 }

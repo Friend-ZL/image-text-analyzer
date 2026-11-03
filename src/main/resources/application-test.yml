@@ -2,25 +2,28 @@ spring:
   ai:
     openai:
       api-key: test-api-key
-      base-url: http://localhost:8888
-  
-  # 测试环境禁用 Flyway（由测试代码控制）
+      base-url: http://127.0.0.1:9
+
+  # 测试默认不连 Postgres。需要真实库的集成测试用 @DynamicPropertySource 覆盖。
   flyway:
     enabled: false
-  
-  # 测试环境使用内存数据库
+
   datasource:
-    url: jdbc:h2:mem:testdb
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
     username: sa
     password:
-  
+
   jpa:
     hibernate:
       ddl-auto: none
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
+
+  sql:
+    init:
+      mode: never
 
 app:
   analysis:

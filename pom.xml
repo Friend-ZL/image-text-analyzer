@@ -22,7 +22,7 @@
         <java.version>17</java.version>
         <spring-ai.version>1.0.0-M3</spring-ai.version>
         <pdfbox.version>3.0.1</pdfbox.version>
-        <testcontainers.version>1.19.3</testcontainers.version>
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
 
     <dependencies>

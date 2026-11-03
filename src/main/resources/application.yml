@@ -44,14 +44,6 @@ spring:
           model: qwen-vl-max
           temperature: 0.7
   
-  # Security 配置
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: ${JWT_ISSUER_URI:}
-          jwk-set-uri: ${JWT_JWK_SET_URI:}
-
 app:
   analysis:
     max-pdf-pages: 10
@@ -60,9 +52,14 @@ app:
     supported-file-types: image/jpeg,image/png,image/gif,image/webp,image/jpg,application/pdf
     pdf-render-dpi: 150
   
-  # JWT Claim 映射配置
+  # JWT 资源服务器。留空时非 dev/local 启动失败。
+  # 不要把这些值写进 spring.security.oauth2.resourceserver.jwt.*：
+  # 空字符串也会触发 Boot 的 decoder，并且不会校验 iss/aud。
   security:
     jwt:
+      issuer: ${JWT_ISSUER_URI:}
+      jwk-set-uri: ${JWT_JWK_SET_URI:}
+      audience: ${JWT_AUDIENCE:}
       claims:
         tenant-id: tenant_id
         roles:

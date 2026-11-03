@@ -4,6 +4,7 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -25,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * CI 环境（CI=true）必须有 Docker，否则测试失败。
  */
 @SpringBootTest
+@ActiveProfiles("test")
 @Testcontainers(disabledWithoutDocker = false)
 class FlywayMigrationIT {
     
@@ -42,10 +44,10 @@ class FlywayMigrationIT {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.properties.hibernate.dialect",
+                () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.flyway.enabled", () -> "true");
-        
-        // 禁用 JWT 配置
-        registry.add("spring.security.oauth2.resourceserver.jwt.jwk-set-uri", () -> "");
     }
     
     @Autowired
@@ -98,17 +100,23 @@ class FlywayMigrationIT {
         }
     }
     
+    /**
+     * V1 只记录基线迁移本身。后续 PR（#2 起）可以追加 V2+ 表，本测试不禁止那些表存在。
+     */
     @Test
-    void shouldNotCreateChunkTable() throws Exception {
+    void baselineHistoryRecordsSuccessfulV1() throws Exception {
         try (Connection conn = dataSource.getConnection();
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(
-                     "SELECT tablename FROM pg_tables " +
-                     "WHERE tablename LIKE '%chunk%'"
+                     "SELECT version, description, success FROM flyway_schema_history WHERE version = '1'"
              )) {
-            
-            assertFalse(rs.next(), 
-                "V1 baseline should NOT create chunk table (reserved for PR #2)");
+
+            assertTrue(rs.next(), "V1 baseline must be recorded in flyway_schema_history");
+            assertEquals("1", rs.getString("version"));
+            assertTrue(rs.getString("description").toLowerCase().contains("baseline"),
+                    "V1 description should identify the baseline migration");
+            assertTrue(rs.getBoolean("success"));
+            assertFalse(rs.next(), "version 1 should be a single history row");
         }
     }
     

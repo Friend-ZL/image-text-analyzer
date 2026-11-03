@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
  * claim 名称可通过配置文件自定义。
  */
 @Component
-@Profile("!dev")
+@Profile("!dev & !local")
 public class JwtTenantContext implements TenantContext {
     
     private final JwtClaimProperties claimProperties;

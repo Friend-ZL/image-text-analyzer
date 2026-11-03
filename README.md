@@ -107,19 +107,22 @@ export DATABASE_USERNAME="analyzer"
 export DATABASE_PASSWORD="your-password"
 
 # JWT 认证（从 Keycloak 或其他 OIDC Provider 获取）
+# 默认 profile 会校验 iss，以及 aud 或 azp。任一未配置都会拒绝启动。
 export JWT_ISSUER_URI="https://your-keycloak.com/realms/your-realm"
 export JWT_JWK_SET_URI="https://your-keycloak.com/realms/your-realm/protocol/openid-connect/certs"
+export JWT_AUDIENCE="image-text-analyzer"
 ```
 
 **开发环境（可选）**
 
-开发环境使用 `dev` profile，通过请求头传递身份信息（不需要 JWT）：
+开发环境使用 `dev` 或 `local` profile，通过请求头传递身份信息（不需要 JWT）。
+数据源必须是本机（localhost / 127.0.0.1 / ::1 或内嵌 H2）。不要与 `prod` 或 `production` 同时激活。
 
 ```bash
 export DASHSCOPE_API_KEY="your-api-key-here"
 export SPRING_PROFILES_ACTIVE="dev"
 
-# 可选：配置数据库（不配置则需禁用 Flyway）
+# 可选：本机数据库（远程 DATABASE_URL 会导致 dev/local 拒绝启动）
 export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_dev"
 export FLYWAY_ENABLED="false"
 ```
@@ -559,15 +562,13 @@ image-text-analyzer/
 │   ├── main/
 │   │   ├── java/com/portfolio/analyzer/
 │   │   │   ├── AnalyzerApplication.java          # 启动类
-│   │   │   ├── config/
-│   │   │   │   └── AIConfig.java                # AI 配置
 │   │   │   ├── controller/
 │   │   │   │   └── AnalysisController.java      # API 控制器
 │   │   │   ├── service/
 │   │   │   │   ├── DocumentAnalysisService.java # 文档分析服务
 │   │   │   │   └── ImageProcessingService.java  # 图片处理服务
 │   │   │   ├── ai/
-│   │   │   │   └── MultimodalAIClient.java      # AI 客户端封装
+│   │   │   │   └── MultimodalAIClient.java      # 使用自动配置的 ChatClient.Builder / OpenAiApi
 │   │   │   ├── dto/
 │   │   │   │   └── AnalysisResponse.java        # 响应 DTO
 │   │   │   └── exception/
@@ -676,23 +677,18 @@ spring:
           model: qwen-vl-max
           temperature: 0.7
   
-  # OAuth2 Resource Server（生产环境必需）
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: ${JWT_ISSUER_URI:}
-          jwk-set-uri: ${JWT_JWK_SET_URI:}
-
 app:
   analysis:
     max-pdf-pages: 10
     max-file-size-mb: 10
     pdf-render-dpi: 150
-  
-  # JWT Claim 映射
+
+  # JWT 资源服务器（不要写到 spring.security.oauth2.resourceserver.jwt.*）
   security:
     jwt:
+      issuer: ${JWT_ISSUER_URI:}
+      jwk-set-uri: ${JWT_JWK_SET_URI:}
+      audience: ${JWT_AUDIENCE:}
       claims:
         tenant-id: tenant_id              # 租户 ID claim 名称
         roles:                             # 角色 claim 名称列表
@@ -706,30 +702,39 @@ app:
 
 #### 生产环境（JWT 认证）
 
-必须配置以下环境变量：
+必须配置以下环境变量，否则应用拒绝启动：
 
-- `JWT_ISSUER_URI`：JWT 签发者 URI（如 Keycloak realm URL）
-- `JWT_JWK_SET_URI`：JWK Set URI（用于验证 JWT 签名）
+- `JWT_ISSUER_URI`：期望的 `iss`（如 Keycloak realm URL）
+- `JWT_JWK_SET_URI`：JWK Set URI（验证签名）
+- `JWT_AUDIENCE`：期望受众。`aud` 包含该值，或 `azp` 等于该值，才会通过
+
+签名之外还会校验 `iss`，以及 `aud` / `azp`。未认证返回 E40101；令牌里没有租户返回 E40102。
 
 JWT token 必须包含以下 claims：
 
-- `sub`：用户 ID
+- `sub`：用户 ID（必填）
 - `tenant_id`（可配置）：租户 ID，**必填**
+- `aud` 或 `azp`：必须匹配 `JWT_AUDIENCE`
 - `roles` 或 `realm_access.roles`（可配置）：用户角色列表
 - `groups`（可配置）：用户组列表
 
 #### 开发环境（Header 认证）
 
-⚠️ **警告**：`dev` profile 不安全，仅用于开发测试！
+⚠️ **警告**：`dev` / `local` profile 不安全，只用于本机开发。
 
-使用 `spring.profiles.active=dev` 激活开发模式，通过以下请求头传递身份信息：
+用环境变量 `SPRING_PROFILES_ACTIVE=dev`（或 `local`）激活，不要把 `spring.profiles.active` 写进 `application-dev.yml`。下列情况会在启动时直接失败：
+
+- `dev`/`local` 与 `prod`/`production` 同时激活
+- `dev`/`local` 的数据源不是本机（localhost、127.0.0.1、::1 或内嵌 H2）
+
+请求头：
 
 - `X-Tenant-Id`：租户 ID（必填）
 - `X-User-Id`：用户 ID（必填）
 - `X-Roles`：角色列表（逗号分隔，可选）
 - `X-Groups`：用户组列表（逗号分隔，可选）
 
-生产环境严禁使用 `dev` profile。
+`prod` 和未指定 profile 的默认启动都不会加载 `DevTenantContext`。
 
 ### 切换到 OpenAI GPT-4o
 

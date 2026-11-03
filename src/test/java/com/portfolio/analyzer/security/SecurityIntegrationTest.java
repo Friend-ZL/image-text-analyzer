@@ -1,10 +1,6 @@
 package com.portfolio.analyzer.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.RSAKey;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
-import com.nimbusds.jose.proc.SecurityContext;
 import com.portfolio.analyzer.common.ApiResponse;
 import com.portfolio.analyzer.service.DocumentAnalysisService;
 import org.junit.jupiter.api.Test;
@@ -12,10 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -43,10 +36,16 @@ class SecurityIntegrationTest {
     
     @MockBean
     private DocumentAnalysisService analysisService;
-    
-    @MockBean
-    private org.springframework.ai.chat.client.ChatClient.Builder chatClientBuilder;
-    
+
+    @Test
+    void shouldNotTreatTenantBearingJwtAsMissingTenant() throws Exception {
+        mockMvc.perform(get("/api/v1/analyze")
+                        .with(jwt().jwt(builder -> builder
+                                .subject("user1")
+                                .claim("tenant_id", "tenant1"))))
+                .andExpect(status().isMethodNotAllowed());
+    }
+
     @Test
     void shouldReturn401ForNoToken() throws Exception {
         MvcResult result = mockMvc.perform(get("/api/v1/analyze"))

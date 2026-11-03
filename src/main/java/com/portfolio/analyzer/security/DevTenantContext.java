@@ -13,10 +13,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 开发环境租户上下文实现（仅 dev profile 生效）
+ * 开发环境租户上下文（仅 dev 或 local，且不能与 prod/production 同时激活）。
  * <p>
- * ⚠️ 警告：此实现不安全，仅用于开发环境测试！
- * 从请求头直接读取身份信息，生产环境必须使用 JWT 认证。
+ * ⚠️ 警告：此实现不安全，从请求头直接读取身份。生产环境必须使用 JWT。
+ * 启动守卫会拒绝 dev/local 与 prod 同时开启，以及 dev/local 连接非本机数据源。
  * <p>
  * 支持的请求头：
  * - X-Tenant-Id: 租户 ID（必填）
@@ -25,7 +25,7 @@ import java.util.stream.Collectors;
  * - X-Groups: 用户组列表（逗号分隔，可选）
  */
 @Component
-@Profile("dev")
+@Profile("(dev | local) & !prod & !production")
 public class DevTenantContext implements TenantContext {
     
     private static final Logger logger = LoggerFactory.getLogger(DevTenantContext.class);
