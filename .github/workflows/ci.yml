@@ -105,7 +105,7 @@ jobs:
   docker-build:
     name: Verify Docker Build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -127,8 +127,12 @@ jobs:
           REDIS_PASSWORD=test_redis_password
           MINIO_ROOT_USER=test_minio_user
           MINIO_ROOT_PASSWORD=test_minio_password
-          KEYCLOAK_ADMIN=test_admin
-          KEYCLOAK_ADMIN_PASSWORD=test_keycloak_password
+          KC_BOOTSTRAP_ADMIN_USERNAME=test_admin
+          KC_BOOTSTRAP_ADMIN_PASSWORD=test_keycloak_password
+          KC_HOSTNAME=http://localhost:8180
+          JWT_ISSUER_URI=http://localhost:8180/realms/master
+          JWT_JWK_SET_URI=http://keycloak:8080/realms/master/protocol/openid-connect/certs
+          JWT_AUDIENCE=image-text-analyzer
           EOF
 
       - name: Validate docker-compose configuration
@@ -145,13 +149,21 @@ jobs:
       - name: Test services startup and health checks
         run: |
           echo "启动所有服务并等待健康检查..."
-          docker compose up -d --wait --timeout 120
+          docker compose up -d --wait --wait-timeout 300
           echo ""
           echo "检查服务状态..."
           docker compose ps
           echo ""
           echo "✅ All services started and passed health checks"
-          
+
+      - name: Print service status and logs on failure
+        if: failure()
+        run: |
+          echo "=== docker compose ps -a ==="
+          docker compose ps -a || true
+          echo "=== service logs ==="
+          docker compose logs --no-color || true
+
       - name: Cleanup
         if: always()
         run: |

@@ -118,7 +118,7 @@ mvn spring-boot:run
 
 ### 使用 Docker Compose 快速启动
 
-如果你更喜欢使用 Docker 进行本地开发，可以使用 docker-compose 一键启动所有服务（包括 PostgreSQL、Redis、MinIO、Keycloak）。
+如果你更喜欢使用 Docker 进行本地开发，可以用 docker compose 启动应用、PostgreSQL、Redis 和 Keycloak。MinIO 暂时没有启用：公开镜像需要认证，compose 里对应服务已注释。
 
 #### 1. 复制环境变量模板
 
@@ -151,8 +151,8 @@ docker compose ps
 #### 5. 访问应用
 
 - **应用界面**: http://localhost:8080
-- **MinIO Console**: http://localhost:9001（用户名/密码见 `.env`）
-- **Keycloak Admin**: http://localhost:8180（用户名/密码见 `.env`）
+- **应用健康检查**: http://localhost:8080/api/health
+- **Keycloak Admin**: http://localhost:8180（用户名/密码见 `.env` 的 `KC_BOOTSTRAP_ADMIN_*`）
 
 #### 6. 查看日志
 
@@ -175,8 +175,8 @@ docker compose down
 如果你想在 IDE 中调试应用，可以只启动依赖服务：
 
 ```bash
-# 只启动 PostgreSQL、Redis、MinIO、Keycloak
-docker compose up -d postgres redis minio keycloak
+# 只启动 PostgreSQL、Redis、Keycloak（MinIO 暂时未启用）
+docker compose up -d postgres redis keycloak
 
 # 在 IDE 中启动 Spring Boot 应用
 mvn spring-boot:run
@@ -186,15 +186,33 @@ mvn spring-boot:run
 
 ### Docker 服务说明
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| 应用 | 8080 | Spring Boot 应用 |
-| PostgreSQL | 5432 | 数据库（带 pgvector 扩展，为 Stage 2 准备） |
-| Redis | 6379 | 缓存服务（为 Stage 4 准备） |
-| MinIO | 9000, 9001 | 对象存储（为未来文件存储准备） |
-| Keycloak | 8180 | 身份认证服务（为未来权限管理准备） |
+| 服务 | 镜像 | 端口 | 健康检查 |
+|------|------|------|----------|
+| 应用 | 本地构建（Alpine JRE） | 8080 | `wget` 访问 `/api/health` |
+| PostgreSQL | `pgvector/pgvector:0.8.6-pg16` | 5432 | `pg_isready` |
+| Redis | `redis:8.8.3-alpine` | 6379 | `redis-cli` |
+| Keycloak | `quay.io/keycloak/keycloak:26.8` | 8180 → 容器 8080 | 管理端口 9000 的 `/health/ready`（镜像无 curl，用 bash `/dev/tcp`） |
+
+MinIO 暂时未包含在上述服务中。
 
 **注意**：所有端口都绑定到 `127.0.0.1`，仅本地访问，不会暴露到外网。
+
+### Keycloak 发行者与 JWT
+
+compose 以 `prod` profile 启动应用。非 dev profile 要求三个环境变量都有值（`app.security.jwt.issuer` / `jwk-set-uri` / `audience`）：
+
+| 变量 | compose 中的值 | 作用 |
+|------|----------------|------|
+| `KC_HOSTNAME` | `http://localhost:8180` | 固定 Keycloak 前端地址 |
+| `JWT_ISSUER_URI` | `http://localhost:8180/realms/master` | 必须与 token 的 `iss` 完全一致 |
+| `JWT_JWK_SET_URI` | `http://keycloak:8080/realms/master/protocol/openid-connect/certs` | 应用容器能访问的公钥地址 |
+| `JWT_AUDIENCE` | `image-text-analyzer` | `aud` 包含该值，或 `azp` 等于该值 |
+
+`KC_HOSTNAME` 使用浏览器看到的地址（宿主机 `8180`），不用容器内的 `keycloak:8080`。这样无论从浏览器还是从应用容器访问，token 的 `iss` 都是 `http://localhost:8180/realms/master`。`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` 让应用仍然可以通过服务名 `keycloak` 拉取 JWK。
+
+`JWT_AUDIENCE` 应对齐签发令牌的 Keycloak 客户端 ID。`start-dev` 只提供 `master` realm，不会自动创建 `image-text-analyzer` 客户端，需要在该 realm 里自行创建。占位值见 `.env.example`。
+
+当前分支在 `prod` 下额外设置 `SPRING_MAIN_ALLOW_BEAN_DEFINITION_OVERRIDING=true`。`AIConfig` 与 Spring AI 自动配置都注册了 `chatClientBuilder`，不打开这项应用会起不来。集成测试里已有同样设置。
 
 ## 📖 API 使用示例
 

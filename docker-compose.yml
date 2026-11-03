@@ -25,7 +25,7 @@ services:
       - analyzer-network
 
   # ============================================
-  # Redis 7
+  # Redis 8
   # ============================================
   redis:
     image: redis:8.8.3-alpine
@@ -47,11 +47,8 @@ services:
 
   # ============================================
   # MinIO Object Storage
-  # 注意: MinIO 官方镜像在公开注册表中需要认证，暂时注释
-  # 如需使用，请：
-  #   1. 使用本地构建的 MinIO 镜像
-  #   2. 或使用私有注册表
-  #   3. 或等待 MinIO 提供公开镜像
+  # 暂时不启动：公开仓库中的 MinIO 镜像需要认证，CI 无法拉取。
+  # 恢复前不要在 `docker compose up` 里点名 minio。
   # ============================================
   # minio:
   #   image: quay.io/minio/minio:latest
@@ -83,8 +80,13 @@ services:
     container_name: analyzer-keycloak
     restart: unless-stopped
     environment:
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      # Keycloak 26：KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD 已弃用
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      # 完整前端 URL。token iss = ${KC_HOSTNAME}/realms/master，与浏览器走 8180 时一致。
+      KC_HOSTNAME: ${KC_HOSTNAME}
+      # 应用容器用 http://keycloak:8080 做后端调用时，不改写 iss。
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
     command: start-dev
@@ -92,12 +94,15 @@ services:
       - "127.0.0.1:8180:8080"
     volumes:
       - keycloak-data:/opt/keycloak/data
+    # 镜像没有 curl。Keycloak 25+ 的 /health/ready 在管理端口 9000，不在 8080。
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/8080 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-      start_period: 60s
+      test:
+        - CMD-SHELL
+        - bash -c '{ printf "HEAD /health/ready HTTP/1.0\r\n\r\n" >&0; grep -q "HTTP/1.[01] 200"; } 0<>/dev/tcp/127.0.0.1/9000'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
     networks:
       - analyzer-network
 
@@ -112,7 +117,15 @@ services:
     restart: unless-stopped
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      # AIConfig 与 Spring AI 自动配置都声明了 chatClientBuilder。测试里同样打开了这项。
+      SPRING_MAIN_ALLOW_BEAN_DEFINITION_OVERRIDING: "true"
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      # prod 读取 app.security.jwt.*。iss 必须等于 KC_HOSTNAME/realms/master。
+      JWT_ISSUER_URI: ${JWT_ISSUER_URI}
+      # 应用容器访问不到宿主机的 localhost:8180，走 compose DNS。
+      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI}
+      # aud 包含该值，或 azp 等于该值。应对齐 Keycloak 客户端 ID。
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
       # PostgreSQL 连接（暂时注释，Stage 2 会用到）
       # SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       # SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
@@ -132,6 +145,13 @@ services:
       #   condition: service_healthy
       keycloak:
         condition: service_healthy
+    # 运行镜像是 Alpine JRE，使用已有的 /api/health，不额外安装 curl。
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health | grep -q '\"data\":\"OK\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
     networks:
       - analyzer-network
 
@@ -163,8 +183,8 @@ networks:
 #    docker compose up -d
 #
 # 2. 仅启动依赖服务（方便 IDE 调试应用）:
-#    docker compose up -d postgres redis minio keycloak
-#    然后在 IDE 中启动 Spring Boot 应用
+#    docker compose up -d postgres redis keycloak
+#    MinIO 暂时未启用。然后在 IDE 中启动 Spring Boot 应用。
 #
 # 3. 查看日志:
 #    docker compose logs -f app
