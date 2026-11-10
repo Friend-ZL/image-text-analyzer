@@ -69,6 +69,12 @@
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
 
+        <!-- Micrometer：重排降级计数 rag.rerank.fallback。不引入 actuator，避免多出管理端点。 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+        </dependency>
+
         <!-- Apache Tika for file type detection -->
         <dependency>
             <groupId>org.apache.tika</groupId>
@@ -140,6 +146,14 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- 重排 HTTP 用桩，测试不访问百炼。 -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>mockwebserver</artifactId>
+            <version>4.12.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

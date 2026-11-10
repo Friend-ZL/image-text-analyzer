@@ -44,6 +44,18 @@ app:
     embedding-model: text-embedding-v4
     embedding-dimensions: 1024
     hnsw-ef-search: 100
+    recall-top-n: 20
+    rerank:
+      enabled: false
+      provider: dashscope
+      model: qwen3-rerank
+      timeout-ms: 800
+      min-score: 0.3
+      domain: maas.aliyuncs.com
+      region: cn-beijing
+      workspace-id: ""
+      # 测试不要打到百炼。关闭重排时不会请求这个地址。
+      base-url: http://127.0.0.1:9
 
 logging:
   level:

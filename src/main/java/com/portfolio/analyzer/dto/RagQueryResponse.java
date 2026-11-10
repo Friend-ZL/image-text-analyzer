@@ -8,12 +8,29 @@ import java.util.List;
 
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 public class RagQueryResponse {
     private String answer;
     private List<DocumentSource> sources;
     private String model;
     private long latencyMs;
+
+    /**
+     * 本次是否采用了重排序结果。关闭或降级为 false；重排调用成功为 true，
+     * 即使随后被 min-score 全部截掉也仍为 true。
+     */
+    private boolean reranked;
+
+    public RagQueryResponse(String answer, List<DocumentSource> sources, String model, long latencyMs) {
+        this(answer, sources, model, latencyMs, false);
+    }
+
+    public RagQueryResponse(String answer, List<DocumentSource> sources, String model, long latencyMs, boolean reranked) {
+        this.answer = answer;
+        this.sources = sources;
+        this.model = model;
+        this.latencyMs = latencyMs;
+        this.reranked = reranked;
+    }
     
     /**
      * 文档来源（白名单字段）
