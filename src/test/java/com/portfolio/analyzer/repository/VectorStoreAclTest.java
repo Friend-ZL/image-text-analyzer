@@ -8,6 +8,8 @@ import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -112,6 +114,26 @@ class VectorStoreAclTest {
                     assertThat(business.getErrorCode()).isEqualTo(ErrorCode.INVALID_PARAMETER);
                     assertThat(business.getErrorCode().getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
                     assertThat(business.getErrorCode().getCode()).isEqualTo("E40001");
+                    assertThat(business.getMessage()).isEqualTo("ownerUserId must not be blank");
+                });
+
+        verify(jdbcTemplate, never()).update(anyString(), any(Object[].class));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "   ", "\t"})
+    void updateDocumentAcl_blankOwnerRejectedAtEntryWithHttp400(String ownerUserId) {
+        TenantPrincipal principal = new TenantPrincipal("tenant-1", "user-1", Set.of(), Set.of("group-a"));
+
+        assertThatThrownBy(() -> vectorStore.updateDocumentAcl(
+                principal, UUID.randomUUID(), ownerUserId, Set.of("group-a")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException business = (BusinessException) ex;
+                    assertThat(business.getErrorCode()).isEqualTo(ErrorCode.INVALID_PARAMETER);
+                    assertThat(business.getErrorCode().getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(business.getErrorCode().getCode()).isEqualTo("E40001");
+                    assertThat(business.getMessage()).isEqualTo("ownerUserId must not be blank");
                 });
 
         verify(jdbcTemplate, never()).update(anyString(), any(Object[].class));
