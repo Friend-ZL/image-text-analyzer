@@ -8,112 +8,100 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-import jakarta.annotation.PostConstruct;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 开发环境的租户上下文实现
- * 
- * <p>从HTTP请求头读取租户/用户/角色/组信息：
- * <ul>
- *   <li>X-Tenant-Id: 租户ID（必需）</li>
- *   <li>X-User-Id: 用户ID（可选）</li>
- *   <li>X-User-Roles: 逗号分隔的角色列表（API权限，可选）</li>
- *   <li>X-User-Groups: 逗号分隔的组列表（文档ACL，可选）</li>
- * </ul>
- * 
- * <p><strong>仅在dev profile激活。</strong>
- * 启动时会打印警告日志提醒这是开发模式，不应在生产环境使用。
- * 
- * @since Stage 2 - Security refactor
+ * 开发环境租户上下文（仅 dev 或 local，且不能与 prod/production 同时激活）。
+ * <p>
+ * ⚠️ 警告：此实现不安全，从请求头直接读取身份。生产环境必须使用 JWT。
+ * 启动守卫会拒绝 dev/local 与 prod 同时开启，以及 dev/local 连接非本机数据源。
+ * <p>
+ * 支持的请求头：
+ * - X-Tenant-Id: 租户 ID（必填）
+ * - X-User-Id: 用户 ID（必填）
+ * - X-Roles: 角色列表（逗号分隔，可选）
+ * - X-Groups: 用户组列表（逗号分隔，可选）
  */
 @Component
-@Profile("dev")
+@Profile("(dev | local) & !prod & !production")
 public class DevTenantContext implements TenantContext {
     
     private static final Logger logger = LoggerFactory.getLogger(DevTenantContext.class);
-    private static final String HEADER_TENANT_ID = "X-Tenant-Id";
-    private static final String HEADER_USER_ID = "X-User-Id";
-    private static final String HEADER_USER_ROLES = "X-User-Roles";
-    private static final String HEADER_USER_GROUPS = "X-User-Groups";
     
-    @PostConstruct
-    public void init() {
-        logger.warn("========================================");
-        logger.warn("DevTenantContext is active (profile=dev)");
-        logger.warn("Reading tenant/user/roles/groups from HTTP headers");
-        logger.warn("DO NOT USE IN PRODUCTION");
-        logger.warn("========================================");
+    private static final String TENANT_ID_HEADER = "X-Tenant-Id";
+    private static final String USER_ID_HEADER = "X-User-Id";
+    private static final String ROLES_HEADER = "X-Roles";
+    private static final String GROUPS_HEADER = "X-Groups";
+    
+    public DevTenantContext() {
+        logger.warn("⚠️ DevTenantContext is active - INSECURE, for development only!");
     }
     
     @Override
     public String getTenantId() {
-        HttpServletRequest request = getCurrentRequest();
-        if (request == null) {
-            throw new TenantMissingException("No HTTP request in context");
-        }
-        
-        String tenantId = request.getHeader(HEADER_TENANT_ID);
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new TenantMissingException("Missing or blank " + HEADER_TENANT_ID + " header");
-        }
-        
-        return tenantId;
+        return current().tenantId();
     }
     
     @Override
     public String getUserId() {
-        HttpServletRequest request = getCurrentRequest();
-        if (request == null) {
-            return null;
-        }
-        
-        String userId = request.getHeader(HEADER_USER_ID);
-        return (userId != null && !userId.isBlank()) ? userId : null;
+        return current().userId();
     }
     
     @Override
     public Set<String> getRoles() {
-        return parseHeaderSet(HEADER_USER_ROLES);
+        return current().roles();
     }
     
     @Override
     public Set<String> getGroups() {
-        return parseHeaderSet(HEADER_USER_GROUPS);
+        return current().groups();
     }
     
     @Override
     public TenantPrincipal current() {
-        return new TenantPrincipal(
-                getTenantId(),
-                getUserId(),
-                getRoles(),
-                getGroups()
-        );
-    }
-    
-    private Set<String> parseHeaderSet(String headerName) {
         HttpServletRequest request = getCurrentRequest();
-        if (request == null) {
-            return Set.of();
+        
+        String tenantId = request.getHeader(TENANT_ID_HEADER);
+        String userId = request.getHeader(USER_ID_HEADER);
+        
+        if (tenantId == null || tenantId.trim().isEmpty()) {
+            throw new TenantMissingException("Missing X-Tenant-Id header in dev mode");
         }
         
-        String header = request.getHeader(headerName);
-        if (header == null || header.isBlank()) {
+        if (userId == null || userId.trim().isEmpty()) {
+            throw new TenantMissingException("Missing X-User-Id header in dev mode");
+        }
+        
+        Set<String> roles = parseHeaderList(request.getHeader(ROLES_HEADER));
+        Set<String> groups = parseHeaderList(request.getHeader(GROUPS_HEADER));
+        
+        logger.debug("DevTenantContext: tenantId={}, userId={}, roles={}, groups={}", 
+            tenantId, userId, roles, groups);
+        
+        return new TenantPrincipal(tenantId, userId, roles, groups);
+    }
+    
+    private HttpServletRequest getCurrentRequest() {
+        ServletRequestAttributes attributes = 
+            (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        
+        if (attributes == null) {
+            throw new TenantMissingException("No request context available");
+        }
+        
+        return attributes.getRequest();
+    }
+    
+    private Set<String> parseHeaderList(String header) {
+        if (header == null || header.trim().isEmpty()) {
             return Set.of();
         }
         
         return Arrays.stream(header.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .collect(Collectors.toUnmodifiableSet());
-    }
-    
-    private HttpServletRequest getCurrentRequest() {
-        ServletRequestAttributes attributes = 
-                (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        return attributes != null ? attributes.getRequest() : null;
+                .collect(Collectors.toSet());
     }
 }

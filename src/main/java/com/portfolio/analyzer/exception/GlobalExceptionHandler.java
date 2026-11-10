@@ -9,7 +9,6 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -38,26 +37,21 @@ public class GlobalExceptionHandler {
     private static final Logger logger = LoggerFactory.getLogger(GlobalExceptionHandler.class);
     
     /**
-     * 处理租户信息缺失异常 -> 401 Unauthorized
-     * <p>当请求缺少X-Tenant-Id等必需头时抛出。
-     * BE-2将定义官方错误码E40102，这里暂用401。
-     */
-    @ExceptionHandler(TenantMissingException.class)
-    public ResponseEntity<ApiResponse<Void>> handleTenantMissing(TenantMissingException ex) {
-        logger.warn("Tenant missing: {}", ex.getMessage());
-        // TODO: BE-2 will define E40102, for now use generic INVALID_PARAMETER with 401
-        String traceId = MDC.get("traceId");
-        ApiResponse<Void> response = ApiResponse.error(ErrorCode.INVALID_PARAMETER, "租户信息缺失", traceId);
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(response);
-    }
-    
-    /**
      * 处理业务异常
      */
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException ex) {
         logger.error("Business exception: {} - {}", ex.getErrorCode().getCode(), ex.getMessage());
         return buildErrorResponse(ex.getErrorCode(), ex.getErrorCode().getMessage());
+    }
+    
+    /**
+     * 处理租户信息缺失异常
+     */
+    @ExceptionHandler(TenantMissingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTenantMissing(TenantMissingException ex) {
+        logger.error("Tenant missing: {}", ex.getMessage());
+        return buildErrorResponse(ErrorCode.TENANT_MISSING, ErrorCode.TENANT_MISSING.getMessage());
     }
     
     /**

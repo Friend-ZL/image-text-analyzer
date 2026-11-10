@@ -1,7 +1,10 @@
 package com.portfolio.analyzer.repository;
 
+import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.config.RagConfig;
+import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.security.TenantPrincipal;
+import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +16,7 @@ import org.springframework.jdbc.core.RowMapper;
 import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.mockito.Mockito.lenient;
@@ -94,5 +98,22 @@ class VectorStoreAclTest {
         );
         
         assertThat(results).isEmpty();
+    }
+
+    @Test
+    void updateDocumentAcl_nullOwnerRejectedAtEntryWithHttp400() {
+        TenantPrincipal principal = new TenantPrincipal("tenant-1", "user-1", Set.of(), Set.of("group-a"));
+
+        assertThatThrownBy(() -> vectorStore.updateDocumentAcl(
+                principal, UUID.randomUUID(), null, Set.of("group-a")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(ex -> {
+                    BusinessException business = (BusinessException) ex;
+                    assertThat(business.getErrorCode()).isEqualTo(ErrorCode.INVALID_PARAMETER);
+                    assertThat(business.getErrorCode().getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(business.getErrorCode().getCode()).isEqualTo("E40001");
+                });
+
+        verify(jdbcTemplate, never()).update(anyString(), any(Object[].class));
     }
 }

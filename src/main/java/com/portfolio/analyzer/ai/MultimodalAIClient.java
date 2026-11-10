@@ -10,7 +10,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.model.Media;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.MimeTypeUtils;
@@ -40,17 +39,18 @@ public class MultimodalAIClient {
     
     public MultimodalAIClient(
             ChatClient.Builder chatClientBuilder,
-            OpenAiApi openAiApi,
+            OpenAiChatModel chatModel,
             @Value("${app.rag.chat-model:qwen-plus}") String textModel) {
         
         this.vlmChatClient = chatClientBuilder.build();
         
-        OpenAiChatModel textChatModel = new OpenAiChatModel(openAiApi,
-                OpenAiChatOptions.builder()
+        // 复用自动配置的 OpenAiChatModel。不注册 OpenAiApi 或额外的 chatClientBuilder bean。
+        this.textChatClient = ChatClient.builder(chatModel)
+                .defaultOptions(OpenAiChatOptions.builder()
                         .withModel(textModel)
                         .withTemperature(0.7)
-                        .build());
-        this.textChatClient = ChatClient.builder(textChatModel).build();
+                        .build())
+                .build();
     }
     
     /**

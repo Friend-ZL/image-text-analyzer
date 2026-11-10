@@ -1,29 +1,49 @@
 spring:
   ai:
     openai:
-      api-key: test-key
-      base-url: http://localhost:8080/mock
-  datasource:
-    # Overridden by @DynamicPropertySource in tests
-    url: jdbc:postgresql://localhost:5432/testdb
-    username: test
-    password: test
+      api-key: test-api-key
+      base-url: http://127.0.0.1:9
+
+  # 单元测试默认使用 H2，不连 Postgres、不跑 Flyway。
+  # 需要真实 pgvector 的 IT（RagEndToEndIT、FlywayMigrationIT）在 @DynamicPropertySource 里覆盖
+  # url、username、password、driver-class-name、hibernate.dialect 和 flyway.enabled。
   flyway:
-    enabled: true
-    clean-disabled: false
+    enabled: false
+
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  sql:
+    init:
+      mode: never
 
 app:
+  analysis:
+    max-pdf-pages: 5
+    max-file-size-mb: 5
   rag:
     chunk-size: 500
     chunk-overlap: 50
     top-k: 3
     similarity-threshold: 0.7
+    max-ingest-size-mb: 10
+    max-pdf-pages: 50
+    chat-model: qwen-plus
+    vlm-model: qwen-vl-max
+    min-text-length-for-ocr: 50
     embedding-model: text-embedding-v4
     embedding-dimensions: 1024
     hnsw-ef-search: 100
-  analysis:
-    max-pdf-pages: 10
-    max-file-size-mb: 10
 
 logging:
   level:

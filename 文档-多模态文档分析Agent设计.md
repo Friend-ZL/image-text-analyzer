@@ -459,9 +459,9 @@ spring:
   
   # 数据库配置（Stage 2）
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:analyzer_db}
-    username: ${DB_USER:analyzer}
-    password: ${DB_PASSWORD:analyzer_pass}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_db}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer_pass}
     driver-class-name: org.postgresql.Driver
   
   jpa:
@@ -801,7 +801,7 @@ networks:
   @Profile("dev")
   @Component
   public class DevTenantContext implements TenantContext {
-      // 从请求头读取：X-Tenant-Id, X-User-Id, X-User-Groups
+      // 从请求头读取：X-Tenant-Id, X-User-Id, X-Roles, X-Groups
       // 启动时打印 WARN：仅供开发使用，不安全
   }
   ```

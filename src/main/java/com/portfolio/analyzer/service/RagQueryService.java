@@ -152,18 +152,30 @@ public class RagQueryService {
             return null;
         }
         
-        String pattern = "\"" + fieldName + "\":\"";
-        int start = json.indexOf(pattern);
-        if (start == -1) {
+        String key = "\"" + fieldName + "\"";
+        int keyAt = json.indexOf(key);
+        if (keyAt < 0) {
             return null;
         }
-        
-        start += pattern.length();
-        int end = json.indexOf("\"", start);
-        if (end == -1) {
+        int cursor = keyAt + key.length();
+        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
+            cursor++;
+        }
+        if (cursor >= json.length() || json.charAt(cursor) != ':') {
             return null;
         }
-        
+        cursor++;
+        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
+            cursor++;
+        }
+        if (cursor >= json.length() || json.charAt(cursor) != '"') {
+            return null;
+        }
+        int start = cursor + 1;
+        int end = json.indexOf('"', start);
+        if (end < 0) {
+            return null;
+        }
         return json.substring(start, end);
     }
     

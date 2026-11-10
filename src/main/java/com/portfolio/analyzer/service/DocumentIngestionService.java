@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -156,7 +157,7 @@ public class DocumentIngestionService {
                 "file_size, source, page_count, total_chunks, embedding_model, embedding_dim) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
-        String[] groupsArray = principal.groups().toArray(new String[0]);
+        Array groupsArray = textArray(principal.groups().toArray(new String[0]));
         
         jdbcTemplate.update(sql,
                 UUID.fromString(documentId),
@@ -193,6 +194,12 @@ public class DocumentIngestionService {
         }
     }
     
+    private Array textArray(String[] values) {
+        String[] safe = values == null ? new String[0] : values;
+        return jdbcTemplate.execute((ConnectionCallback<Array>) connection ->
+                connection.createArrayOf("text", safe));
+    }
+
     /**
      * 简单JSON序列化（仅用于metadata中的简单字段）
      */

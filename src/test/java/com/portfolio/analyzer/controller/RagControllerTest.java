@@ -1,6 +1,6 @@
 package com.portfolio.analyzer.controller;
 
-import com.portfolio.analyzer.dto.RagQueryRequest;
+import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.dto.RagQueryResponse;
 import com.portfolio.analyzer.security.TenantContext;
 import com.portfolio.analyzer.security.TenantMissingException;
@@ -9,6 +9,10 @@ import com.portfolio.analyzer.service.DocumentIngestionService;
 import com.portfolio.analyzer.service.RagQueryService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.security.oauth2.resource.servlet.OAuth2ResourceServerAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration;
+import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
@@ -25,7 +29,15 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@WebMvcTest(RagController.class)
+@WebMvcTest(
+        controllers = RagController.class,
+        excludeAutoConfiguration = {
+                SecurityAutoConfiguration.class,
+                SecurityFilterAutoConfiguration.class,
+                UserDetailsServiceAutoConfiguration.class,
+                OAuth2ResourceServerAutoConfiguration.class
+        }
+)
 @ActiveProfiles("test")
 class RagControllerTest {
     
@@ -62,7 +74,9 @@ class RagControllerTest {
                         .file(file)
                         .param("source", "test-source")
                         .header("X-Tenant-Id", "tenant-1")
-                        .header("X-User-Id", "user-1"))
+                        .header("X-User-Id", "user-1")
+                        .header("X-Roles", "user")
+                        .header("X-Groups", "group-a"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("00000"))
                 .andExpect(jsonPath("$.data.documentId").value("doc-123"));
@@ -79,7 +93,8 @@ class RagControllerTest {
         mockMvc.perform(multipart("/api/v1/rag/ingest")
                         .file(file))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.code").value("E40001"));
+                .andExpect(jsonPath("$.code").value(ErrorCode.TENANT_MISSING.getCode()))
+                .andExpect(jsonPath("$.code").value("E40102"));
     }
     
     @Test
@@ -101,6 +116,8 @@ class RagControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .header("X-Tenant-Id", "tenant-1")
                         .header("X-User-Id", "user-1")
+                        .header("X-Roles", "user")
+                        .header("X-Groups", "group-a")
                         .content("{\"question\": \"What is Spring AI?\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("00000"))
@@ -116,7 +133,8 @@ class RagControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"question\": \"test\"}"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.code").value("E40001"));
+                .andExpect(jsonPath("$.code").value(ErrorCode.TENANT_MISSING.getCode()))
+                .andExpect(jsonPath("$.code").value("E40102"));
     }
     
     @Test

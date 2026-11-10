@@ -1,42 +1,41 @@
 package com.portfolio.analyzer.security;
 
-import java.io.Serializable;
 import java.util.Collections;
+import java.util.Objects;
 import java.util.Set;
 
 /**
- * 不可变的租户主体快照
- * 
- * <p>在controller/entry层从TenantContext解析一次，然后作为显式参数传递给服务层。
- * 防御性拷贝确保Set不可变，支持序列化（用于未来的outbox/async任务表）。
- * 
- * @param tenantId 租户ID（必须）
- * @param userId 用户ID（可选）
- * @param roles 角色集合（API权限，来自OIDC realm/client roles）
- * @param groups 组集合（文档ACL）
- * 
- * @since Stage 2 - Security refactor
+ * 租户主体信息（不可变）
+ * <p>
+ * 包含租户 ID、用户 ID、角色和用户组信息。
+ * 所有集合字段都是防御性拷贝的不可变集合。
+ *
+ * @param tenantId 租户 ID（必填）
+ * @param userId   用户 ID（必填）
+ * @param roles    角色集合（不可变，不为 null）
+ * @param groups   用户组集合（不可变，不为 null）
  */
 public record TenantPrincipal(
         String tenantId,
         String userId,
         Set<String> roles,
         Set<String> groups
-) implements Serializable {
+) {
     
     /**
-     * 规范构造器：防御性拷贝，确保不可变
+     * 构造函数：防御性拷贝，确保不可变性
      */
     public TenantPrincipal {
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new TenantMissingException("Tenant ID is required");
-        }
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
+        Objects.requireNonNull(userId, "userId must not be null");
+        
+        // 防御性拷贝为不可变集合
         roles = roles != null ? Set.copyOf(roles) : Set.of();
         groups = groups != null ? Set.copyOf(groups) : Set.of();
     }
     
     /**
-     * 便利工厂方法：无roles/groups
+     * 便捷构造方法：不带角色和用户组
      */
     public static TenantPrincipal of(String tenantId, String userId) {
         return new TenantPrincipal(tenantId, userId, Set.of(), Set.of());

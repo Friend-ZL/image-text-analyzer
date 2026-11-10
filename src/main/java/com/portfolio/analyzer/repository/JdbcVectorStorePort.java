@@ -1,10 +1,16 @@
 package com.portfolio.analyzer.repository;
 
+import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.config.RagConfig;
+import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.security.TenantPrincipal;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.flyway.FlywayMigrationInitializer;
 import org.postgresql.util.PGobject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,8 +47,23 @@ public class JdbcVectorStorePort implements VectorStorePort {
     private final boolean supportsIterativeScan;
     
     public JdbcVectorStorePort(JdbcTemplate jdbcTemplate, RagConfig ragConfig) {
+        this(jdbcTemplate, ragConfig, null);
+    }
+
+    /**
+     * Flyway 开启时先触发迁移，再探测 pgvector 版本。
+     * 版本探测失败只打 WARN（不带堆栈）；堆栈在 DEBUG。
+     */
+    @Autowired
+    public JdbcVectorStorePort(JdbcTemplate jdbcTemplate,
+                               RagConfig ragConfig,
+                               ObjectProvider<FlywayMigrationInitializer> flywayMigration) {
         this.jdbcTemplate = jdbcTemplate;
         this.ragConfig = ragConfig;
+        if (flywayMigration != null) {
+            flywayMigration.ifAvailable(initializer ->
+                    logger.debug("Flyway migrations applied before pgvector version check"));
+        }
         this.supportsIterativeScan = checkPgVectorVersion();
     }
     
@@ -69,7 +90,8 @@ public class JdbcVectorStorePort implements VectorStorePort {
             return supports;
             
         } catch (Exception e) {
-            logger.warn("Failed to check pgvector version, HNSW iterative_scan disabled", e);
+            logger.warn("Failed to check pgvector version, HNSW iterative_scan disabled: {}", e.toString());
+            logger.debug("pgvector version check failed", e);
             return false;
         }
     }
@@ -116,7 +138,7 @@ public class JdbcVectorStorePort implements VectorStorePort {
                 queryVector, // distance calculation 1
                 principal.tenantId(),
                 principal.userId(),
-                groupsArray,
+                textArray(groupsArray),
                 queryVector, // distance filter
                 distanceThreshold,
                 queryVector, // ORDER BY
@@ -168,7 +190,7 @@ public class JdbcVectorStorePort implements VectorStorePort {
                     chunk.chunkIndex(),
                     chunk.sourceType(),
                     principal.userId(),
-                    groupsArray,
+                    textArray(groupsArray),
                     chunk.embeddingModel(),
                     chunk.embeddingDim(),
                     chunk.content(),
@@ -204,6 +226,10 @@ public class JdbcVectorStorePort implements VectorStorePort {
     @Transactional
     public void updateDocumentAcl(TenantPrincipal principal, UUID docId, 
                                    String ownerUserId, Set<String> aclGroups) {
+        if (ownerUserId == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "ownerUserId must not be null");
+        }
+
         // Set tenant context for RLS
         setTenantContext(principal.tenantId());
         
@@ -217,7 +243,7 @@ public class JdbcVectorStorePort implements VectorStorePort {
                 WHERE tenant_id = ? AND document_id = ?
                 """;
         
-        int docUpdated = jdbcTemplate.update(docSql, ownerUserId, groupsArray, 
+        int docUpdated = jdbcTemplate.update(docSql, ownerUserId, textArray(groupsArray), 
                                               principal.tenantId(), docId);
         
         if (docUpdated == 0) {
@@ -233,7 +259,7 @@ public class JdbcVectorStorePort implements VectorStorePort {
                 WHERE tenant_id = ? AND doc_id = ?
                 """;
         
-        int chunksUpdated = jdbcTemplate.update(chunkSql, ownerUserId, groupsArray,
+        int chunksUpdated = jdbcTemplate.update(chunkSql, ownerUserId, textArray(groupsArray),
                                                  principal.tenantId(), docId);
         
         logger.info("Updated ACL: tenant={}, doc={}, owner={}, groups={}, chunks={}", 
@@ -291,6 +317,15 @@ public class JdbcVectorStorePort implements VectorStorePort {
         }
     }
     
+    /**
+     * text[] 必须在当前事务连接上创建，String[] 不能可靠绑定到 PostgreSQL 数组。
+     */
+    private Array textArray(String[] values) {
+        String[] safe = values == null ? new String[0] : values;
+        return jdbcTemplate.execute((ConnectionCallback<Array>) connection ->
+                connection.createArrayOf("text", safe));
+    }
+
     /**
      * 创建PGobject表示向量
      */

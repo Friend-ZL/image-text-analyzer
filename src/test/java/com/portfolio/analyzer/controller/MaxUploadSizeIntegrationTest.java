@@ -3,35 +3,21 @@ package com.portfolio.analyzer.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.portfolio.analyzer.common.ErrorCode;
-import com.portfolio.analyzer.repository.VectorStorePort;
-import com.portfolio.analyzer.security.TenantContext;
-import com.portfolio.analyzer.security.TenantPrincipal;
+import com.portfolio.analyzer.security.TestJwtSupport;
 import com.portfolio.analyzer.service.DocumentAnalysisService;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.web.client.TestRestTemplate;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import java.util.Set;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * 容器层 MaxUploadSizeExceededException 集成测试
@@ -41,9 +27,7 @@ import static org.mockito.Mockito.when;
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {
-        "spring.ai.openai.api-key=test-key",
-        "spring.main.allow-bean-definition-overriding=true",
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration,org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"
+        "spring.ai.openai.api-key=test-key"
     }
 )
 @TestPropertySource(properties = {
@@ -53,52 +37,6 @@ import static org.mockito.Mockito.when;
 })
 @ActiveProfiles("test")
 public class MaxUploadSizeIntegrationTest {
-    
-    @TestConfiguration
-    static class TestConfig {
-        @Bean
-        @Primary
-        public TenantContext testTenantContext() {
-            TenantContext mock = mock(TenantContext.class);
-            when(mock.current()).thenReturn(
-                    new TenantPrincipal("test-tenant", "test-user", Set.of(), Set.of("test-group"))
-            );
-            return mock;
-        }
-        
-        @Bean
-        @Primary
-        public OpenAiApi testOpenAiApi() {
-            return mock(OpenAiApi.class);
-        }
-        
-        @Bean
-        @Primary
-        public EmbeddingModel testEmbeddingModel() {
-            EmbeddingModel mock = mock(EmbeddingModel.class);
-            float[] dummyEmbedding = new float[1024];
-            when(mock.embed(anyString())).thenReturn(dummyEmbedding);
-            return mock;
-        }
-        
-        @Bean
-        @Primary
-        public ChatClient.Builder testChatClientBuilder() {
-            return mock(ChatClient.Builder.class);
-        }
-        
-        @Bean
-        @Primary
-        public VectorStorePort testVectorStorePort() {
-            return mock(VectorStorePort.class);
-        }
-        
-        @Bean
-        @Primary
-        public JdbcTemplate testJdbcTemplate() {
-            return mock(JdbcTemplate.class);
-        }
-    }
     
     @Autowired
     private TestRestTemplate restTemplate;
@@ -120,6 +58,7 @@ public class MaxUploadSizeIntegrationTest {
         // 构造 multipart 请求
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        headers.setBearerAuth(TestJwtSupport.bearerToken());
         
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", new ByteArrayResource(largeContent) {

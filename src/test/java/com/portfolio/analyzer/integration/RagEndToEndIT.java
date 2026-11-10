@@ -1,12 +1,11 @@
 package com.portfolio.analyzer.integration;
 
+import com.portfolio.analyzer.ai.MultimodalAIClient;
 import com.portfolio.analyzer.config.RagConfig;
 import com.portfolio.analyzer.dto.RagQueryResponse;
 import com.portfolio.analyzer.repository.VectorStorePort;
 import com.portfolio.analyzer.security.TenantContext;
 import com.portfolio.analyzer.security.TenantPrincipal;
-import com.portfolio.analyzer.service.DocumentChunkingService;
-import com.portfolio.analyzer.service.DocumentExtractionService;
 import com.portfolio.analyzer.service.DocumentIngestionService;
 import com.portfolio.analyzer.service.RagQueryService;
 import org.junit.jupiter.api.BeforeAll;
@@ -17,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
@@ -27,8 +27,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -72,6 +74,10 @@ public class RagEndToEndIT {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.properties.hibernate.dialect",
+                () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.ai.openai.api-key", () -> "test-key");
     }
     
@@ -96,17 +102,22 @@ public class RagEndToEndIT {
             assertThat(ragConfig.getEmbeddingDimensions()).isEqualTo(1024);
             assertThat(ragConfig.getEmbeddingModel()).isEqualTo("text-embedding-v4");
             
-            // 返回1024维确定性向量
+            // 1024 维、彼此余弦相似度高于 app.rag.similarity-threshold 的确定性向量。
+            // 租户隔离和 ACL 由 SQL 保证，不依赖向量是否正交。
             when(mock.embed(anyString())).thenAnswer(invocation -> {
                 String text = invocation.getArgument(0);
                 float[] embedding = new float[1024];
-                
-                // 简单确定性生成（基于文本哈希）
-                int hash = text.hashCode();
-                for (int i = 0; i < 1024; i++) {
-                    embedding[i] = (float) ((hash + i) % 100) / 100.0f;
+                java.util.Arrays.fill(embedding, 1.0f);
+                int hash = text == null ? 0 : text.hashCode();
+                embedding[Math.floorMod(hash, 1024)] += 0.05f;
+                double norm = 0.0;
+                for (float value : embedding) {
+                    norm += (double) value * value;
                 }
-                
+                norm = Math.sqrt(norm);
+                for (int i = 0; i < embedding.length; i++) {
+                    embedding[i] /= (float) norm;
+                }
                 return embedding;
             });
             
@@ -122,6 +133,19 @@ public class RagEndToEndIT {
         @Primary
         public TenantContext testTenantContext() {
             return new TestableTenantContext();
+        }
+
+        /**
+         * 生成模型不打到 DashScope。检索结果仍来自真实 pgvector。
+         */
+        @Bean
+        @Primary
+        public MultimodalAIClient stubMultimodalAIClient() {
+            MultimodalAIClient client = mock(MultimodalAIClient.class);
+            when(client.chat(anyString())).thenReturn("stub answer 【数据块1】");
+            when(client.getTextModelName()).thenReturn("qwen-plus");
+            when(client.getModelName()).thenReturn("qwen-vl-max");
+            return client;
         }
     }
     
@@ -196,33 +220,127 @@ public class RagEndToEndIT {
     
     @Test
     void shouldVerifyFlywayMigration() {
-        // Verify chunk table exists
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'chunk'",
-                Integer.class
+        List<Map<String, Object>> history = jdbcTemplate.queryForList(
+                "SELECT version, success FROM flyway_schema_history WHERE version IN ('1','2') ORDER BY installed_rank"
         );
-        assertThat(count).isEqualTo(1);
-        
-        // Verify vector extension
+        assertThat(history).hasSize(2);
+        assertThat(history).allSatisfy(row -> assertThat(row.get("success")).isEqualTo(true));
+        assertThat(history).extracting(row -> row.get("version")).containsExactly("1", "2");
+
+        List<String> tables = jdbcTemplate.queryForList(
+                "SELECT table_name FROM information_schema.tables " +
+                        "WHERE table_schema = 'public' AND table_name IN ('document','chunk') ORDER BY table_name",
+                String.class
+        );
+        assertThat(tables).containsExactly("chunk", "document");
+
+        List<Map<String, Object>> requiredColumns = jdbcTemplate.queryForList(
+                "SELECT table_name, column_name, is_nullable FROM information_schema.columns " +
+                        "WHERE table_schema = 'public' AND table_name IN ('document','chunk') " +
+                        "AND column_name IN ('tenant_id','owner_user_id','acl_groups','embedding','embedding_dim','embedding_model')"
+        );
+        assertThat(requiredColumns).isNotEmpty();
+        assertThat(requiredColumns).allSatisfy(row -> assertThat(row.get("is_nullable")).isEqualTo("NO"));
+        assertThat(requiredColumns).extracting(row -> row.get("table_name") + "." + row.get("column_name"))
+                .contains(
+                        "document.tenant_id", "document.owner_user_id", "document.acl_groups",
+                        "document.embedding_model", "document.embedding_dim",
+                        "chunk.tenant_id", "chunk.owner_user_id", "chunk.acl_groups",
+                        "chunk.embedding", "chunk.embedding_dim", "chunk.embedding_model"
+                );
+
+        String embeddingType = jdbcTemplate.queryForObject(
+                "SELECT format_type(atttypid, atttypmod) FROM pg_attribute " +
+                        "WHERE attrelid = 'chunk'::regclass AND attname = 'embedding'",
+                String.class
+        );
+        assertThat(embeddingType).isEqualTo("vector(1024)");
+
+        List<Map<String, Object>> indexes = jdbcTemplate.queryForList(
+                "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'chunk'"
+        );
+        assertThat(indexDef(indexes, "idx_chunk_embedding").toLowerCase()).contains("using hnsw").contains("vector_cosine_ops");
+        assertThat(indexDef(indexes, "idx_chunk_acl_groups").toLowerCase()).contains("using gin");
+        assertThat(indexes).extracting(row -> row.get("indexname")).contains("uq_chunk_tenant_doc_index");
+        assertThat(indexes).extracting(row -> row.get("indexname")).doesNotContain("idx_chunk_tenant");
+
+        List<Map<String, Object>> constraints = jdbcTemplate.queryForList(
+                "SELECT conname, contype FROM pg_constraint " +
+                        "WHERE conrelid IN ('chunk'::regclass, 'document'::regclass)"
+        );
+        assertThat(constraints).extracting(row -> row.get("conname") + ":" + row.get("contype"))
+                .contains(
+                        "fk_chunk_document:f",
+                        "uq_chunk_tenant_doc_index:u",
+                        "uq_document_tenant_id:u"
+                );
+        long checkCount = constraints.stream().filter(row -> "c".equals(String.valueOf(row.get("contype")))).count();
+        assertThat(checkCount).isGreaterThanOrEqualTo(2);
+
         Boolean vectorExists = jdbcTemplate.queryForObject(
                 "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')",
                 Boolean.class
         );
         assertThat(vectorExists).isTrue();
-        
-        // Verify HNSW index
-        Integer indexCount = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'idx_chunk_embedding'",
-                Integer.class
+
+        UUID docId = UUID.randomUUID();
+        jdbcTemplate.update(
+                "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
+                        "VALUES (?, 'tenant-a', 'user-a', 'text-embedding-v4', 1024)",
+                docId
         );
-        assertThat(indexCount).isEqualTo(1);
-        
-        // Verify UNIQUE constraint
-        Boolean constraintExists = jdbcTemplate.queryForObject(
-                "SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE conname = 'uq_chunk_tenant_doc_index')",
-                Boolean.class
-        );
-        assertThat(constraintExists).isTrue();
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
+                        "VALUES (?, NULL, 'user-a', 'text-embedding-v4', 1024)",
+                UUID.randomUUID()
+        )).isInstanceOf(DataAccessException.class);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO document (document_id, tenant_id, embedding_model, embedding_dim) " +
+                        "VALUES (?, 'tenant-a', 'text-embedding-v4', 1024)",
+                UUID.randomUUID()
+        )).isInstanceOf(DataAccessException.class);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
+                        "VALUES (?, 'tenant-a', 'user-a', 'text-embedding-v4', 512)",
+                UUID.randomUUID()
+        )).isInstanceOf(DataAccessException.class);
+
+        String vector = zeroVector(1024);
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO chunk (tenant_id, doc_id, chunk_index, source_type, owner_user_id, " +
+                        "embedding_model, embedding_dim, content, embedding) " +
+                        "VALUES ('tenant-a', ?, 0, 'x', 'user-a', 'text-embedding-v4', 1024, 'content', ?::vector)",
+                docId, vector
+        )).isInstanceOf(DataAccessException.class);
+
+        assertThatThrownBy(() -> jdbcTemplate.update(
+                "INSERT INTO chunk (tenant_id, doc_id, chunk_index, source_type, owner_user_id, " +
+                        "embedding_model, embedding_dim, content, embedding) " +
+                        "VALUES ('tenant-b', ?, 0, 'text', 'user-b', 'text-embedding-v4', 1024, 'content', ?::vector)",
+                docId, vector
+        )).isInstanceOf(DataAccessException.class);
+    }
+
+    private static String indexDef(List<Map<String, Object>> indexes, String name) {
+        return indexes.stream()
+                .filter(row -> name.equals(row.get("indexname")))
+                .map(row -> String.valueOf(row.get("indexdef")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("missing index " + name));
+    }
+
+    private static String zeroVector(int dimensions) {
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < dimensions; i++) {
+            if (i > 0) {
+                builder.append(',');
+            }
+            builder.append('0');
+        }
+        return builder.append(']').toString();
     }
     
     @Test
@@ -385,6 +503,12 @@ public class RagEndToEndIT {
     @Test
     void shouldRejectWrongDimensionVector() {
         TenantPrincipal principal = new TenantPrincipal("tenant-reject", "user-reject", Set.of(), Set.of());
+        UUID docId = UUID.randomUUID();
+        jdbcTemplate.update(
+                "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
+                        "VALUES (?, ?, ?, 'text-embedding-v4', 1024)",
+                docId, principal.tenantId(), principal.userId()
+        );
         
         // Try to insert a chunk with wrong dimension (512 instead of 1024)
         float[] wrongDimEmbedding = new float[512];
@@ -393,7 +517,7 @@ public class RagEndToEndIT {
         }
         
         VectorStorePort.ChunkData wrongChunk = new VectorStorePort.ChunkData(
-                java.util.UUID.randomUUID(),
+                docId,
                 1,
                 0,
                 "text",

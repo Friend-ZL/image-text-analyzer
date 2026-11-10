@@ -11,7 +11,7 @@
 CREATE TABLE document (
     document_id UUID NOT NULL,
     tenant_id VARCHAR(64) NOT NULL,
-    owner_user_id VARCHAR(128),
+    owner_user_id VARCHAR(128) NOT NULL,
     acl_groups TEXT[] NOT NULL DEFAULT '{}',
     file_name VARCHAR(255),
     content_type VARCHAR(100),
@@ -38,7 +38,7 @@ CREATE TABLE chunk (
     page_no INT,
     chunk_index INT NOT NULL,
     source_type VARCHAR(20) NOT NULL CHECK (source_type IN ('text', 'vlm_ocr', 'image_desc')),
-    owner_user_id VARCHAR(128),
+    owner_user_id VARCHAR(128) NOT NULL,
     acl_groups TEXT[] NOT NULL DEFAULT '{}',
     embedding_model VARCHAR(100) NOT NULL,
     embedding_dim INT NOT NULL CHECK (embedding_dim = 1024),
@@ -63,7 +63,8 @@ CREATE INDEX idx_chunk_embedding ON chunk USING hnsw (embedding vector_cosine_op
 COMMENT ON TABLE document IS 'Document metadata with tenant isolation';
 COMMENT ON TABLE chunk IS 'Document chunks with explicit tenant/ACL columns for security boundary enforcement';
 COMMENT ON COLUMN chunk.tenant_id IS 'Security boundary: must match TenantContext.getTenantId()';
-COMMENT ON COLUMN chunk.owner_user_id IS 'Security boundary: document owner (can access regardless of groups)';
+COMMENT ON COLUMN chunk.owner_user_id IS 'Security boundary: document owner, NOT NULL (no system-identity ingest path)';
+COMMENT ON COLUMN document.owner_user_id IS 'Security boundary: document owner, NOT NULL (no system-identity ingest path)';
 COMMENT ON COLUMN chunk.acl_groups IS 'Security boundary: text[] of authorized groups (PostgreSQL array operator &&)';
 COMMENT ON COLUMN chunk.metadata IS 'Non-security metadata only (file_name, content_type, etc.)';
 COMMENT ON COLUMN chunk.embedding IS '1024-dimensional vector from text-embedding-v4';

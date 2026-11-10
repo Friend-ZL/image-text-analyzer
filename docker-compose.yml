@@ -1,6 +1,4 @@
-networks:
-  analyzer_network:
-    driver: bridge
+services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: image-text-analyzer-pgvector

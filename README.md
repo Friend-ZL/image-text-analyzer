@@ -25,14 +25,14 @@
 - ✅ 完整的错误处理和参数验证
 - ✅ 单元测试和集成测试覆盖
 
-## ✨ Stage 2 功能特性（新增）
+## ✨ Stage 2 功能特性
 
-- ✅ 集成 PostgreSQL + pgvector 向量数据库
-- ✅ 文档智能切块和向量化存储
-- ✅ RAG（检索增强生成）问答，带引用来源
-- ✅ 基于相似度阈值的智能检索过滤
-- ✅ Docker Compose 一键启动数据库环境
-- ✅ 保持 Stage 1 的 `/api/analyze` 功能完整可用
+- ✅ 集成 PostgreSQL + pgvector 向量数据库（Flyway V2：`document` / `chunk`）
+- ✅ 文档按页切块，1024 维 `text-embedding-v4` 向量入库
+- ✅ RAG 问答，带来源（页码、文件名、相似度），租户与 ACL 在 SQL 中过滤
+- ✅ `owner_user_id` 在 document 和 chunk 上均为 NOT NULL
+- ✅ Docker Compose 启动本机 pgvector
+- ✅ Stage 1 的 `/api/v1/analyze` 保持可用
 
 ## 🏗 系统架构
 
@@ -81,12 +81,12 @@ graph TB
 | 核心框架 | Spring Boot | 3.2.0 | Web 应用框架 |
 | 语言 | Java | 17+ | 开发语言 |
 | AI 集成 | Spring AI | 1.0.0-M3 | AI 模型调用抽象层 |
-| LLM 服务 | 阿里云百炼 | qwen-vl-max | 视觉语言模型 |
-| Embedding | 阿里云百炼 | text-embedding-v3 | 文本向量化（Stage 2） |
-| 向量数据库 | PostgreSQL + pgvector | pg16 | 向量存储和检索（Stage 2） |
-| ORM | Spring Data JPA | - | 数据库操作（Stage 2） |
+| LLM 服务 | 阿里云百炼 | qwen-vl-max / qwen-plus | 视觉模型与 RAG 文本模型 |
+| Embedding | 阿里云百炼 | text-embedding-v4 | 1024 维文本向量 |
+| 向量数据库 | PostgreSQL + pgvector | pg16 | 向量存储和检索 |
+| 迁移 | Flyway | Boot 管理 | V1 扩展，V2 RAG 表 |
 | PDF 处理 | Apache PDFBox | 3.0.1 | PDF 渲染 |
-| 容器化 | Docker Compose | - | 本地数据库环境（Stage 2） |
+| 容器化 | Docker Compose | - | 本机 pgvector |
 | 构建工具 | Maven | 3.9+ | 项目构建 |
 | 测试框架 | JUnit 5 + Mockito | - | 单元/集成测试 |
 
@@ -96,7 +96,7 @@ graph TB
 
 - Java 17 或更高版本
 - Maven 3.6 或更高版本
-- Docker 和 Docker Compose（用于 Stage 2 的 pgvector 数据库）
+- Docker 与 Docker Compose（本机 pgvector），或自行准备的 PostgreSQL 13+
 - 阿里云 DashScope API Key（[获取地址](https://dashscope.aliyun.com/)）
 
 ### 1. 克隆项目
@@ -106,30 +106,61 @@ git clone <repository-url>
 cd image-text-analyzer
 ```
 
-### 2. 启动 pgvector 数据库（Stage 2 必需）
+### 2. 配置环境变量
+
+**生产环境（必需）**
 
 ```bash
-docker compose up -d
+# AI 服务
+export DASHSCOPE_API_KEY="your-api-key-here"
+
+# 数据库
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer"
+export DATABASE_USERNAME="analyzer"
+export DATABASE_PASSWORD="your-password"
+
+# JWT 认证（从 Keycloak 或其他 OIDC Provider 获取）
+# 默认 profile 会校验 iss，以及 aud 或 azp。任一未配置都会拒绝启动。
+export JWT_ISSUER_URI="https://your-keycloak.com/realms/your-realm"
+export JWT_JWK_SET_URI="https://your-keycloak.com/realms/your-realm/protocol/openid-connect/certs"
+export JWT_AUDIENCE="image-text-analyzer"
 ```
 
-等待数据库启动完成（约 10 秒），可以通过以下命令检查状态：
+**开发环境（可选）**
 
-```bash
-docker compose ps
-```
-
-### 3. 配置 API Key
-
-**方式一：环境变量（推荐）**
+开发环境使用 `dev` 或 `local` profile，通过请求头传递身份信息（不需要 JWT）。
+数据源必须是本机（localhost / 127.0.0.1 / ::1 或内嵌 H2）。不要与 `prod` 或 `production` 同时激活。
 
 ```bash
 export DASHSCOPE_API_KEY="your-api-key-here"
+export SPRING_PROFILES_ACTIVE="dev"
+
+# 可选：本机数据库（远程 DATABASE_URL 会导致 dev/local 拒绝启动）
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_dev"
+export FLYWAY_ENABLED="false"
 ```
 
-**方式二：系统属性**
+复制 `src/main/resources/application-dev.yml.example` 为 `application-dev.yml` 并根据需要修改。
+
+### 3. 初始化数据库
+
+本机可以用 Compose 启动 pgvector（应用通过 `DATABASE_*` 连接，不要再用 `DB_*`）：
 
 ```bash
-mvn spring-boot:run -DDASHSCOPE_API_KEY="your-api-key-here"
+cp .env.example .env
+docker compose up -d
+docker compose ps
+```
+
+生产环境也可以手工建库。Flyway 会在应用启动时执行 V1（`vector` 扩展）和 V2（RAG 表）。
+
+```bash
+# 创建数据库
+psql -U postgres -c "CREATE DATABASE analyzer;"
+psql -U postgres -c "CREATE USER analyzer WITH PASSWORD 'your-password';"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE analyzer TO analyzer;"
+
+# Flyway 会在应用启动时自动运行迁移
 ```
 
 ### 4. 启动应用
@@ -140,9 +171,30 @@ mvn spring-boot:run
 
 应用将在 `http://localhost:8080` 启动。
 
-### 5. 访问界面
+### 5. 访问和测试
 
-在浏览器中打开：http://localhost:8080
+**生产环境**：需要在请求头中携带 JWT token
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "file=@example.jpg" \
+  -F "question=这张图片的内容是什么？"
+```
+
+**开发环境**：通过请求头传递身份信息
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: admin,user" \
+  -H "X-Groups: group-a" \
+  -F "file=@example.jpg" \
+  -F "question=这张图片的内容是什么？"
+```
+
+浏览器访问：http://localhost:8080
 
 ## 📖 API 接口规范
 
@@ -261,6 +313,9 @@ Link: </api/v1/analyze>; rel="successor-version"
 | E40001 | 400 | 参数校验失败 | 必填参数缺失、格式不正确 |
 | E40002 | 400 | 文件不能为空 | 未上传文件或文件为空 |
 | E40003 | 400 | 问题不能为空 | question 参数为空或空白字符串 |
+| E40101 | 401 | 未认证或令牌无效 | 缺少 JWT token 或 token 无效/过期 |
+| E40102 | 401 | 租户信息缺失 | JWT token 中缺少 tenant_id claim |
+| E40301 | 403 | 无权限访问 | 用户已认证但无访问权限 |
 | E40401 | 404 | 请求的资源不存在 | 访问不存在的端点 |
 | E40501 | 405 | 不支持的请求方法 | 使用了不支持的 HTTP 方法（响应包含 `Allow` 头） |
 | E41301 | 413 | 文件大小超过限制 | 文件大小超过配置的上限 |
@@ -332,61 +387,49 @@ Link: </api/v1/analyze>; rel="successor-version"
 }
 ```
 
-## 📖 Stage 2 API 使用示例
+## 📖 Stage 2 API
 
-### 入库文档（RAG）
+开发环境用 `X-Tenant-Id`、`X-User-Id`、`X-Roles`、`X-Groups`。生产环境改用 `Authorization: Bearer`。响应包在统一的 `ApiResponse` 里。`owner_user_id` 来自当前用户，不能为空。
 
-将文档内容切块并存入向量数据库：
+### 入库
 
 ```bash
-curl -X POST http://localhost:8080/api/rag/ingest \
+curl -X POST http://localhost:8080/api/v1/rag/ingest \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: user" \
+  -H "X-Groups: group-a" \
   -F "file=@knowledge.txt" \
   -F "source=knowledge-base"
 ```
 
-响应示例：
-
 ```json
 {
-  "message": "文档入库成功",
-  "chunksProcessed": 15,
-  "processingTimeMs": 1250
+  "code": "00000",
+  "message": "成功",
+  "data": {
+    "documentId": "6f1c...",
+    "pagesProcessed": 1,
+    "chunksProcessed": 1,
+    "processingTimeMs": 120
+  },
+  "traceId": "..."
 }
 ```
 
-### RAG 检索增强问答
-
-基于已入库的文档进行智能问答，返回答案和引用来源：
+### 检索增强问答
 
 ```bash
-curl -X POST http://localhost:8080/api/rag/query \
+curl -X POST http://localhost:8080/api/v1/rag/query \
   -H "Content-Type: application/json" \
-  -d '{
-    "question": "Spring AI 是什么？",
-    "conversationId": null
-  }'
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: user" \
+  -H "X-Groups: group-a" \
+  -d '{"question": "Spring AI 是什么？"}'
 ```
 
-响应示例：
-
-```json
-{
-  "answer": "Spring AI 是一个用于构建 AI 应用的框架，它提供了统一的抽象层...",
-  "sources": [
-    {
-      "content": "Spring AI 是一个强大的框架...",
-      "source": "knowledge-base",
-      "similarity": 0.92,
-      "metadata": {
-        "fileName": "knowledge.txt",
-        "contentType": "text/plain"
-      }
-    }
-  ],
-  "model": "qwen-vl-max",
-  "latencyMs": 856
-}
-```
+`data.sources[]` 包含 `excerpt`、`source`、`fileName`、`pageNumber`、`similarity`、`contentType`。缺租户时返回 `E40102`。
 
 ## 🧪 测试
 
@@ -409,6 +452,7 @@ mvn verify
 - ✅ AI 客户端参数验证测试
 - ✅ 文档分析服务集成测试
 - ✅ API 控制器集成测试
+- ✅ RAG 入库、检索、租户隔离与 ACL（`RagEndToEndIT`，Testcontainers pgvector）
 
 ## 🔍 核心设计决策（面试要点）
 
@@ -539,25 +583,23 @@ image-text-analyzer/
 │   ├── main/
 │   │   ├── java/com/portfolio/analyzer/
 │   │   │   ├── AnalyzerApplication.java          # 启动类
-│   │   │   ├── config/
-│   │   │   │   ├── AIConfig.java                # AI 配置
-│   │   │   │   └── RagConfig.java               # RAG 配置（Stage 2）
-│   │   │   ├── controller/
-│   │   │   │   ├── AnalysisController.java      # 分析 API 控制器
-│   │   │   │   └── RagController.java           # RAG API 控制器（Stage 2）
-│   │   │   ├── service/
-│   │   │   │   ├── DocumentAnalysisService.java # 文档分析服务
-│   │   │   │   ├── ImageProcessingService.java  # 图片处理服务
-│   │   │   │   ├── DocumentIngestionService.java # 文档入库服务（Stage 2）
-│   │   │   │   └── RagQueryService.java         # RAG 查询服务（Stage 2）
 │   │   │   ├── ai/
-│   │   │   │   └── MultimodalAIClient.java      # AI 客户端封装
+│   │   │   │   └── MultimodalAIClient.java      # VLM 用自动配置的 ChatClient.Builder；文本模型注入 OpenAiChatModel
+│   │   │   ├── config/
+│   │   │   │   └── RagConfig.java               # RAG 配置
+│   │   │   ├── controller/
+│   │   │   │   ├── AnalysisController.java      # 分析 API
+│   │   │   │   └── RagController.java           # /api/v1/rag
+│   │   │   ├── repository/
+│   │   │   │   ├── VectorStorePort.java         # chunk 读写端口
+│   │   │   │   └── JdbcVectorStorePort.java     # 显式 tenant/ACL SQL
+│   │   │   ├── service/
+│   │   │   │   ├── DocumentIngestionService.java
+│   │   │   │   └── RagQueryService.java
 │   │   │   ├── dto/
-│   │   │   │   ├── AnalysisResponse.java        # 分析响应 DTO
-│   │   │   │   ├── IngestRequest.java           # 入库请求 DTO（Stage 2）
-│   │   │   │   ├── IngestResponse.java          # 入库响应 DTO（Stage 2）
-│   │   │   │   ├── RagQueryRequest.java         # RAG 查询请求 DTO（Stage 2）
-│   │   │   │   └── RagQueryResponse.java        # RAG 查询响应 DTO（Stage 2）
+│   │   │   │   ├── AnalysisResponse.java        # 响应 DTO
+│   │   │   │   ├── RagQueryRequest.java
+│   │   │   │   └── RagQueryResponse.java
 │   │   │   └── exception/
 │   │   │       ├── GlobalExceptionHandler.java  # 全局异常处理
 │   │   │       ├── InvalidFileTypeException.java
@@ -571,19 +613,18 @@ image-text-analyzer/
 │       ├── java/com/portfolio/analyzer/
 │       │   ├── service/
 │       │   │   ├── ImageProcessingServiceTest.java
-│       │   │   ├── DocumentAnalysisServiceTest.java
-│       │   │   ├── DocumentIngestionServiceTest.java # 入库服务测试（Stage 2）
-│       │   │   └── RagQueryServiceTest.java     # RAG 查询测试（Stage 2）
+│       │   │   └── DocumentAnalysisServiceTest.java
 │       │   ├── ai/
 │       │   │   └── MultimodalAIClientTest.java
 │       │   ├── controller/
 │       │   │   ├── AnalysisControllerTest.java
-│       │   │   └── RagControllerTest.java       # RAG 控制器测试（Stage 2）
+│       │   │   └── RagControllerTest.java
 │       │   └── TestDataGenerator.java           # 测试数据生成器
 │       └── resources/
 │           ├── test-data/                        # 测试数据
 │           └── application-test.yml              # 测试配置
-├── docker-compose.yml                            # pgvector 数据库（Stage 2）
+├── docker-compose.yml                            # 本机 pgvector
+├── .env.example
 ├── pom.xml
 ├── .gitignore
 ├── README.md
@@ -592,20 +633,17 @@ image-text-analyzer/
 
 ## 🗺 开发路线图
 
-### Stage 2: 多模态 RAG（已完成）
+### Stage 2: 多模态 RAG（本 PR）
 
-- ✅ 集成 PostgreSQL + pgvector 向量数据库
-- ✅ 实现文档分块和向量化（文本）
-- ✅ 构建检索增强生成（RAG）流程
-- ✅ 基于相似度阈值的智能检索
-- ✅ Docker Compose 本地数据库环境
-- ✅ 完整的单元测试和集成测试
+- ✅ PostgreSQL + pgvector，Flyway V2 建 `document` / `chunk`
+- ✅ 按页切块与 1024 维向量入库
+- ✅ 检索增强生成，SQL 里按租户和 ACL 过滤
+- [ ] 历史对话（后续 PR，排在 V4；RLS 是 V3，单独 PR）
 
 **技术要点**：
-- 使用 Spring AI PgVectorStore 进行向量存储
-- TokenTextSplitter 实现智能文档切块
-- 相似度计算和阈值过滤
-- 保持 Stage 1 功能完全兼容
+- `VectorStorePort` / `JdbcVectorStorePort`，安全列是真实列而不是 JSONB
+- 唯一约束 `(tenant_id, doc_id, chunk_index)` 同时覆盖 tenant 前缀，不另建 `idx_chunk_tenant`
+- `owner_user_id` NOT NULL；`updateDocumentAcl` 拒绝 null owner（HTTP 400）
 
 ### Stage 3: Agent 工具调用（计划中）
 
@@ -645,38 +683,102 @@ image-text-analyzer/
 
 ```yaml
 spring:
+  # 数据源配置
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+  
+  # JPA 配置（由 Flyway 管理 schema）
+  jpa:
+    hibernate:
+      ddl-auto: none
+  
+  # Flyway 数据库迁移
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  
+  # Spring AI
   ai:
     openai:
-      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1  # API 端点
-      api-key: ${DASHSCOPE_API_KEY}                                # API Key
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${DASHSCOPE_API_KEY}
       chat:
         options:
-          model: qwen-vl-max                                       # 聊天模型
-          temperature: 0.7                                         # 温度参数
+          model: qwen-vl-max
+          temperature: 0.7
       embedding:
         options:
-          model: text-embedding-v3                                 # Embedding 模型（Stage 2）
-    vectorstore:
-      pgvector:
-        index-type: HNSW                                           # 索引类型（Stage 2）
-        distance-type: COSINE_DISTANCE                             # 距离度量（Stage 2）
-        dimensions: 1536                                           # 向量维度（Stage 2）
-  datasource:
-    url: jdbc:postgresql://localhost:5432/analyzer_db              # 数据库连接（Stage 2）
-    username: analyzer                                             # 数据库用户名（Stage 2）
-    password: analyzer_pass                                        # 数据库密码（Stage 2）
-
+          model: text-embedding-v4
+          dimensions: 1024
+  
 app:
   analysis:
-    max-pdf-pages: 10           # PDF 最大页数
-    max-file-size-mb: 10        # 文件最大大小（MB）
-    pdf-render-dpi: 150         # PDF 渲染 DPI
+    max-pdf-pages: 10
+    max-file-size-mb: 10
+    pdf-render-dpi: 150
   rag:
-    chunk-size: 500             # 文档切块大小（Stage 2）
-    chunk-overlap: 50           # 切块重叠大小（Stage 2）
-    top-k: 3                    # 检索返回数量（Stage 2）
-    similarity-threshold: 0.7   # 相似度阈值（Stage 2）
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    chat-model: qwen-plus
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
+
+  # JWT 资源服务器（不要写到 spring.security.oauth2.resourceserver.jwt.*）
+  security:
+    jwt:
+      issuer: ${JWT_ISSUER_URI:}
+      jwk-set-uri: ${JWT_JWK_SET_URI:}
+      audience: ${JWT_AUDIENCE:}
+      claims:
+        tenant-id: tenant_id              # 租户 ID claim 名称
+        roles:                             # 角色 claim 名称列表
+          - realm_access.roles             # Keycloak realm 角色
+          - roles                          # 标准 roles claim
+        groups:                            # 用户组 claim 名称列表
+          - groups
 ```
+
+### 鉴权配置说明
+
+#### 生产环境（JWT 认证）
+
+必须配置以下环境变量，否则应用拒绝启动：
+
+- `JWT_ISSUER_URI`：期望的 `iss`（如 Keycloak realm URL）
+- `JWT_JWK_SET_URI`：JWK Set URI（验证签名）
+- `JWT_AUDIENCE`：期望受众。`aud` 包含该值，或 `azp` 等于该值，才会通过
+
+签名之外还会校验 `iss`，以及 `aud` / `azp`。未认证返回 E40101；令牌里没有租户返回 E40102。
+
+JWT token 必须包含以下 claims：
+
+- `sub`：用户 ID（必填）
+- `tenant_id`（可配置）：租户 ID，**必填**
+- `aud` 或 `azp`：必须匹配 `JWT_AUDIENCE`
+- `roles` 或 `realm_access.roles`（可配置）：用户角色列表
+- `groups`（可配置）：用户组列表
+
+#### 开发环境（Header 认证）
+
+⚠️ **警告**：`dev` / `local` profile 不安全，只用于本机开发。
+
+用环境变量 `SPRING_PROFILES_ACTIVE=dev`（或 `local`）激活，不要把 `spring.profiles.active` 写进 `application-dev.yml`。下列情况会在启动时直接失败：
+
+- `dev`/`local` 与 `prod`/`production` 同时激活
+- `dev`/`local` 的数据源不是本机（localhost、127.0.0.1、::1 或内嵌 H2）
+
+请求头：
+
+- `X-Tenant-Id`：租户 ID（必填）
+- `X-User-Id`：用户 ID（必填）
+- `X-Roles`：角色列表（逗号分隔，可选）
+- `X-Groups`：用户组列表（逗号分隔，可选）
+
+`prod` 和未指定 profile 的默认启动都不会加载 `DevTenantContext`。
 
 ### 切换到 OpenAI GPT-4o
 
