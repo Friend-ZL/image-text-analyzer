@@ -125,8 +125,13 @@ jobs:
           POSTGRES_PASSWORD=test_password
           POSTGRES_DB=test_db
           DATABASE_URL=jdbc:postgresql://localhost:5432/test_db
-          DATABASE_USERNAME=test_user
-          DATABASE_PASSWORD=test_password
+          DATABASE_USERNAME=app_rw
+          DATABASE_PASSWORD=test_app_rw_password
+          DATABASE_FLYWAY_USERNAME=test_user
+          DATABASE_FLYWAY_PASSWORD=test_password
+          DATABASE_APP_RW_PASSWORD=test_app_rw_password
+          JWT_CLIENT_ID=image-text-analyzer
+          JWT_CLOCK_SKEW_SECONDS=60s
           REDIS_PASSWORD=test_redis_password
           MINIO_ROOT_USER=test_minio_user
           MINIO_ROOT_PASSWORD=test_minio_password

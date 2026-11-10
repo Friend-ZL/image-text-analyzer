@@ -4,9 +4,9 @@ spring:
       api-key: test-api-key
       base-url: http://127.0.0.1:9
 
-  # 单元测试默认使用 H2，不连 Postgres、不跑 Flyway。
-  # 需要真实 pgvector 的 IT（RagEndToEndIT、FlywayMigrationIT）在 @DynamicPropertySource 里覆盖
-  # url、username、password、driver-class-name、hibernate.dialect 和 flyway.enabled。
+  # 单元测试默认使用 H2，不连 Postgres、不跑 Flyway。H2 上租户 set_config 是空操作。
+  # 需要真实 pgvector 的 IT 在 @DynamicPropertySource 里把应用数据源指到 app_rw，
+  # Flyway 用容器 owner，并设置 DATABASE_APP_RW_PASSWORD。
   flyway:
     enabled: false
 

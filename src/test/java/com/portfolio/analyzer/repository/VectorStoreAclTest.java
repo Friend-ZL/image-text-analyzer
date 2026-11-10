@@ -4,6 +4,7 @@ import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.config.RagConfig;
 import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.security.TenantPrincipal;
+import com.portfolio.analyzer.security.TenantSession;
 import org.springframework.http.HttpStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -115,5 +116,20 @@ class VectorStoreAclTest {
                 });
 
         verify(jdbcTemplate, never()).update(anyString(), any(Object[].class));
+    }
+
+    @Test
+    void searchSimilarUsesSharedTenantSession() {
+        TenantSession session = mock(TenantSession.class);
+        JdbcVectorStorePort port = new JdbcVectorStorePort(jdbcTemplate, ragConfig, null, session);
+        TenantPrincipal principal = new TenantPrincipal("tenant-1", "user-2", Set.of(), Set.of());
+        lenient().when(jdbcTemplate.queryForObject(anyString(), eq(String.class), anyString())).thenReturn("100");
+        lenient().when(jdbcTemplate.queryForObject(anyString(), eq(String.class))).thenReturn("relaxed_order");
+        lenient().when(jdbcTemplate.query(anyString(), any(RowMapper.class), (Object[]) any()))
+                .thenReturn(Collections.emptyList());
+
+        port.searchSimilar(principal, new float[1024], 3, 0.7);
+
+        verify(session).apply("tenant-1");
     }
 }

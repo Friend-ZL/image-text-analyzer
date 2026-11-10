@@ -1,5 +1,6 @@
 package com.portfolio.analyzer.security;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,9 +21,20 @@ import java.util.stream.Collectors;
 public class JwtTenantContext implements TenantContext {
     
     private final JwtClaimProperties claimProperties;
-    
+    private final String clientId;
+
+    @Autowired
+    public JwtTenantContext(JwtClaimProperties claimProperties, JwtResourceServerProperties jwtProperties) {
+        this(claimProperties, jwtProperties.getClientId());
+    }
+
     public JwtTenantContext(JwtClaimProperties claimProperties) {
+        this(claimProperties, "image-text-analyzer");
+    }
+
+    public JwtTenantContext(JwtClaimProperties claimProperties, String clientId) {
         this.claimProperties = claimProperties;
+        this.clientId = clientId == null ? "" : clientId;
     }
     
     @Override
@@ -85,7 +97,10 @@ public class JwtTenantContext implements TenantContext {
             Set<String> claimRoles = extractStringSetFromPath(jwt, claimPath);
             roles.addAll(claimRoles);
         }
-        
+        if (!clientId.isBlank()) {
+            roles.addAll(extractStringSetFromPath(jwt, "resource_access." + clientId + ".roles"));
+        }
+
         return roles;
     }
     

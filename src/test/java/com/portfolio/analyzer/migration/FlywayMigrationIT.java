@@ -1,9 +1,11 @@
 package com.portfolio.analyzer.migration;
 
+import com.portfolio.analyzer.testsupport.AppRwIntegrationSupport;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -41,13 +43,7 @@ class FlywayMigrationIT {
     
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-        registry.add("spring.jpa.properties.hibernate.dialect",
-                () -> "org.hibernate.dialect.PostgreSQLDialect");
-        registry.add("spring.flyway.enabled", () -> "true");
+        AppRwIntegrationSupport.register(registry, postgres);
     }
     
     @Autowired
@@ -127,5 +123,55 @@ class FlywayMigrationIT {
         assertNotNull(result);
         assertEquals(0, result.pending().length, 
             "All migrations should be applied");
+    }
+
+    @Test
+    void applicationDatasourceIsAppRw() throws Exception {
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT current_user")) {
+            assertTrue(rs.next());
+            assertEquals(AppRwIntegrationSupport.APP_RW_USER, rs.getString(1));
+        }
+    }
+
+    @Test
+    void v3EnablesForcedRlsAndNonBypassRole() {
+        JdbcTemplate app = new JdbcTemplate(dataSource);
+        JdbcTemplate owner = AppRwIntegrationSupport.ownerJdbc(postgres);
+
+        Integer v3 = owner.queryForObject(
+                "SELECT COUNT(*) FROM flyway_schema_history WHERE version = '3' AND success",
+                Integer.class);
+        assertEquals(1, v3);
+
+        var tables = app.queryForList(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, "
+                        + "pg_get_userbyid(c.relowner) AS owner "
+                        + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        + "WHERE n.nspname = 'public' AND c.relname IN ('document', 'chunk') "
+                        + "ORDER BY c.relname");
+        assertEquals(2, tables.size());
+        for (var row : tables) {
+            assertEquals(Boolean.TRUE, row.get("relrowsecurity"), row.get("relname").toString());
+            assertEquals(Boolean.TRUE, row.get("relforcerowsecurity"), row.get("relname").toString());
+            assertNotEquals("app_rw", row.get("owner"));
+        }
+
+        var policies = app.queryForList(
+                "SELECT tablename, policyname, qual, with_check FROM pg_policies "
+                        + "WHERE schemaname = 'public' AND tablename IN ('document', 'chunk')");
+        assertEquals(2, policies.size());
+        for (var row : policies) {
+            String qual = String.valueOf(row.get("qual"));
+            String check = String.valueOf(row.get("with_check"));
+            assertTrue(qual.contains("app.tenant_id"), qual);
+            assertTrue(check.contains("app.tenant_id"), check);
+        }
+
+        var role = app.queryForMap(
+                "SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = 'app_rw'");
+        assertEquals(Boolean.FALSE, role.get("rolbypassrls"));
+        assertEquals(Boolean.FALSE, role.get("rolsuper"));
     }
 }

@@ -6,15 +6,21 @@
 #
 # dev/local 只允许本机数据源（localhost、127.0.0.1、::1，或内嵌 H2）。
 # 与 prod/production 同时激活，或 DATABASE_URL 指向远程主机，应用会拒绝启动。
+#
+# 连本机 Postgres 时应用账号仍是 app_rw，不要改回 Flyway owner。
+# 启用 Flyway 时还必须提供 DATABASE_FLYWAY_PASSWORD 和 DATABASE_APP_RW_PASSWORD（占位，不要写真实密码）。
+# DATABASE_PASSWORD 与 DATABASE_APP_RW_PASSWORD 使用同一个值。
 
 spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_dev}
-    username: ${DATABASE_USERNAME:analyzer}
-    password: ${DATABASE_PASSWORD:analyzer}
+    username: ${DATABASE_USERNAME:app_rw}
+    password: ${DATABASE_PASSWORD:}
 
   flyway:
     enabled: ${FLYWAY_ENABLED:true}
+    user: ${DATABASE_FLYWAY_USERNAME:analyzer}
+    password: ${DATABASE_FLYWAY_PASSWORD:}
 
   jpa:
     show-sql: true
