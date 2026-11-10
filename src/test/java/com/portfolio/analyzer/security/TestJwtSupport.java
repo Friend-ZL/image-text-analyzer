@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
 import java.time.Instant;
 import java.util.Date;
+import java.util.List;
 
 /**
  * 测试用 RSA 密钥。MockMvc 的 jwt() 不经过 decoder；
@@ -41,6 +42,26 @@ public final class TestJwtSupport {
                 .issueTime(Date.from(now.minusSeconds(60)))
                 .expirationTime(Date.from(now.plusSeconds(600)))
                 .build());
+    }
+
+    /**
+     * Signed with the same RSA key as {@link #decoder()}. {@code tenantId} null
+     * omits the {@code tenant_id} claim. Groups are the JWT {@code groups} claim
+     * (test profile uses {@code JwtTenantContext}, not the dev {@code X-Groups} header).
+     */
+    public static String token(String subject, String tenantId, List<String> groups) {
+        Instant now = Instant.now();
+        JWTClaimsSet.Builder builder = new JWTClaimsSet.Builder()
+                .subject(subject)
+                .issueTime(Date.from(now.minusSeconds(60)))
+                .expirationTime(Date.from(now.plusSeconds(600)));
+        if (tenantId != null) {
+            builder.claim("tenant_id", tenantId);
+        }
+        if (groups != null) {
+            builder.claim("groups", groups);
+        }
+        return sign(builder.build());
     }
 
     private static String sign(JWTClaimsSet claims) {
