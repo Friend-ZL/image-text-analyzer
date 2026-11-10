@@ -128,13 +128,14 @@ public interface VectorStorePort {
      * 
      * @param principal Tenant context
      * @param docId Document UUID
-     * @param ownerUserId New owner. Must not be null. There is no system-identity
+     * @param ownerUserId New owner. Must not be blank. There is no system-identity
      *                    ingest path, and both document.owner_user_id and
-     *                    chunk.owner_user_id are NOT NULL.
+     *                    chunk.owner_user_id are NOT NULL. A non-blank value is
+     *                    stored unchanged (not trimmed).
      * @param aclGroups New ACL groups (can be empty)
      * @throws com.portfolio.analyzer.exception.BusinessException HTTP 400
      *         ({@link com.portfolio.analyzer.common.ErrorCode#INVALID_PARAMETER})
-     *         when {@code ownerUserId} is null. The check happens at this entry
+     *         when {@code ownerUserId} is null or blank. The check happens at this entry
      *         point, before any SQL is issued.
      */
     void updateDocumentAcl(TenantPrincipal principal, UUID docId, String ownerUserId, Set<String> aclGroups);

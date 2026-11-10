@@ -226,8 +226,8 @@ public class JdbcVectorStorePort implements VectorStorePort {
     @Transactional
     public void updateDocumentAcl(TenantPrincipal principal, UUID docId, 
                                    String ownerUserId, Set<String> aclGroups) {
-        if (ownerUserId == null) {
-            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "ownerUserId must not be null");
+        if (ownerUserId == null || ownerUserId.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "ownerUserId must not be blank");
         }
 
         // Set tenant context for RLS
