@@ -86,7 +86,7 @@ graph TB
 | 向量数据库 | PostgreSQL + pgvector | pg16 | 向量存储和检索 |
 | 迁移 | Flyway | Boot 管理 | V1 扩展，V2 RAG 表 |
 | PDF 处理 | Apache PDFBox | 3.0.1 | PDF 渲染 |
-| 容器化 | Docker Compose | - | 本机 pgvector |
+| 容器化 | Docker Compose | - | 应用、pgvector、Redis、Keycloak |
 | 构建工具 | Maven | 3.9+ | 项目构建 |
 | 测试框架 | JUnit 5 + Mockito | - | 单元/集成测试 |
 
@@ -115,7 +115,7 @@ cd image-text-analyzer
 export DASHSCOPE_API_KEY="your-api-key-here"
 
 # 数据库
-export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer"
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_db"
 export DATABASE_USERNAME="analyzer"
 export DATABASE_PASSWORD="your-password"
 
@@ -144,21 +144,21 @@ export FLYWAY_ENABLED="false"
 
 ### 3. 初始化数据库
 
-本机可以用 Compose 启动 pgvector（应用通过 `DATABASE_*` 连接，不要再用 `DB_*`）：
+本机可以用 Compose 只启动 pgvector（应用通过 `DATABASE_*` 连接，不要再用 `DB_*`）。完整栈见下方 Docker 章节。
 
 ```bash
 cp .env.example .env
-docker compose up -d
+docker compose up -d postgres
 docker compose ps
 ```
 
-生产环境也可以手工建库。Flyway 会在应用启动时执行 V1（`vector` 扩展）和 V2（RAG 表）。
+生产环境也可以手工建库。Flyway 会在应用启动时执行 V1（`vector` 扩展）和 V2（RAG 表）。默认库名是 `analyzer_db`。
 
 ```bash
 # 创建数据库
-psql -U postgres -c "CREATE DATABASE analyzer;"
+psql -U postgres -c "CREATE DATABASE analyzer_db;"
 psql -U postgres -c "CREATE USER analyzer WITH PASSWORD 'your-password';"
-psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE analyzer TO analyzer;"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE analyzer_db TO analyzer;"
 
 # Flyway 会在应用启动时自动运行迁移
 ```
@@ -195,6 +195,43 @@ curl -X POST http://localhost:8080/api/v1/analyze \
 ```
 
 浏览器访问：http://localhost:8080
+
+## 🐳 Docker 本地开发
+
+Compose 启动应用、PostgreSQL、Redis 和 Keycloak。MinIO 暂时没有启用：公开镜像需要认证，对应服务已注释。
+
+```bash
+cp .env.example .env
+# 至少改 DASHSCOPE_API_KEY，以及各密码占位值
+docker compose up -d
+docker compose ps
+```
+
+应用在容器里用 `prod` profile。数据源是 `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD`（容器内 URL 指向服务名 `postgres`，库名来自 `POSTGRES_DB`，默认 `analyzer_db`）。JWT 三个变量都要有值：
+
+| 变量 | 默认值 | 作用 |
+|------|--------|------|
+| `KC_HOSTNAME` | `http://localhost:8180` | 浏览器看到的 Keycloak 地址 |
+| `JWT_ISSUER_URI` | `http://localhost:8180/realms/analyzer` | 必须与 token 的 `iss` 一致 |
+| `JWT_JWK_SET_URI` | `http://keycloak:8080/realms/analyzer/protocol/openid-connect/certs` | 应用容器拉取公钥 |
+| `JWT_AUDIENCE` | `image-text-analyzer` | `aud` 包含该值，或 `azp` 等于该值 |
+
+启动时导入 realm `analyzer`，里面有客户端 `image-text-analyzer`。`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`，所以 iss 仍是宿主机地址，JWK 可以走服务名。
+
+在 IDE 里调试应用时只启动依赖，并把 `JWT_JWK_SET_URI` 改成 `http://localhost:8180/realms/analyzer/protocol/openid-connect/certs`：
+
+```bash
+docker compose up -d postgres redis keycloak
+```
+
+| 服务 | 镜像 | 端口 | 健康检查 |
+|------|------|------|----------|
+| 应用 | 本地构建（Alpine JRE） | 8080 | `wget` 访问 `/api/health` |
+| PostgreSQL | `pgvector/pgvector:0.8.6-pg16` | 5432 | `pg_isready` |
+| Redis | `redis:8.8.3-alpine` | 6379 | `redis-cli ping` |
+| Keycloak | `quay.io/keycloak/keycloak:26.8` | 8180 → 容器 8080 | 管理端口 9000 的 `/health/ready` |
+
+端口都绑在 `127.0.0.1`。Keycloak 管理台：http://localhost:8180（账号见 `KC_BOOTSTRAP_ADMIN_*`）。健康检查：http://localhost:8080/api/health。
 
 ## 📖 API 接口规范
 
@@ -685,7 +722,7 @@ image-text-analyzer/
 spring:
   # 数据源配置
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_db}
     username: ${DATABASE_USERNAME:analyzer}
     password: ${DATABASE_PASSWORD:analyzer}
   
@@ -806,11 +843,13 @@ spring:
   - 直接推送到 `main` 分支
 
 - **执行步骤**：
+  - 运行在 `ubuntu-24.04`
   - JDK 17 (Temurin) 环境配置
   - Maven 依赖缓存（加速构建）
-  - 运行单元测试（Surefire）和集成测试（Failsafe）
+  - 单个 `mvn -B verify`：单元测试（Surefire）和集成测试（Failsafe，含 `*IT`）
   - 上传测试报告 artifacts
   - 生成测试结果摘要
+  - 另有 Docker job：构建镜像并用 `docker compose up -d --wait` 检查服务健康
 
 - **API Key 安全性**：CI 环境使用假的 API Key（`ci-dummy-key-not-real`），不会调用真实的百炼/DashScope API。测试配置（`application-test.yml`）会将 API 端点指向不可达地址，确保测试不依赖外部服务。
 

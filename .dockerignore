@@ -1,0 +1,42 @@
+# Maven 构建产物
+target/
+!target/*.jar
+
+# Git 历史
+.git/
+.gitignore
+.gitattributes
+
+# IDE 配置
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+
+# 文档
+*.md
+docs/
+
+# 环境变量
+.env
+.env.*
+!.env.example
+
+# 日志
+*.log
+
+# OS 文件
+.DS_Store
+Thumbs.db
+
+# CI/CD
+.github/
+
+# Docker 相关
+docker-compose.yml
+.dockerignore
+Dockerfile

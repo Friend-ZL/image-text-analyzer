@@ -1,28 +1,190 @@
 services:
+  # ============================================
+  # PostgreSQL 16 with pgvector
+  # healthcheck 等字段属于 postgres 服务，不要写到 networks 下面。
+  # ============================================
   postgres:
-    image: pgvector/pgvector:pg16
-    container_name: image-text-analyzer-pgvector
-    env_file:
-      - .env
+    image: pgvector/pgvector:0.8.6-pg16
+    container_name: analyzer-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-analyzer_db}
-      POSTGRES_USER: ${POSTGRES_USER:-analyzer}
+      POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - pgvector_data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U analyzer -d analyzer_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
     networks:
-      - analyzer_network
+      - analyzer-network
 
+  # ============================================
+  # Redis 8
+  # ============================================
+  redis:
+    image: redis:8.8.3-alpine
+    container_name: analyzer-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - analyzer-network
+
+  # ============================================
+  # MinIO Object Storage
+  # 暂时不启动：公开仓库中的 MinIO 镜像需要认证，CI 无法拉取。
+  # 恢复前不要在 `docker compose up` 里点名 minio。
+  # ============================================
+  # minio:
+  #   image: quay.io/minio/minio:latest
+  #   container_name: analyzer-minio
+  #   restart: unless-stopped
+  #   environment:
+  #     MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  #     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "127.0.0.1:9000:9000"
+  #     - "127.0.0.1:9001:9001"
+  #   volumes:
+  #     - minio-data:/data
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+  #     interval: 15s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 10s
+  #   networks:
+  #     - analyzer-network
+
+  # ============================================
+  # Keycloak (Identity and Access Management)
+  # ============================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8
+    container_name: analyzer-keycloak
+    restart: unless-stopped
+    entrypoint: ["bash", "/opt/keycloak/import-realm.sh"]
+    command: ["start-dev", "--import-realm"]
+    environment:
+      # Keycloak 26：KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD 已弃用
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
+      # 完整前端 URL。token iss = ${KC_HOSTNAME}/realms/analyzer。
+      KC_HOSTNAME: ${KC_HOSTNAME}
+      # 应用容器用 http://keycloak:8080 拉 JWK 时，不改写 iss。
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8180:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./docker/keycloak/analyzer-realm.json:/opt/keycloak/analyzer-realm.json:ro
+      - ./docker/keycloak/import-realm.sh:/opt/keycloak/import-realm.sh:ro
+    # 镜像没有 curl。Keycloak 25+ 的 /health/ready 在管理端口 9000，不在 8080。
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -c '{ printf "HEAD /health/ready HTTP/1.0\r\n\r\n" >&0; grep -q "HTTP/1.[01] 200"; } 0<>/dev/tcp/127.0.0.1/9000'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    networks:
+      - analyzer-network
+
+  # ============================================
+  # Spring Boot Application
+  # ============================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: analyzer-app
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      # prod 读取 app.security.jwt.*。iss 必须等于 ${KC_HOSTNAME}/realms/analyzer。
+      JWT_ISSUER_URI: ${JWT_ISSUER_URI}
+      # 应用容器访问不到宿主机的 localhost:8180，走 compose DNS。
+      JWT_JWK_SET_URI: ${JWT_JWK_SET_URI}
+      # aud 包含该值，或 azp 等于该值。对齐 realm 里的客户端 ID。
+      JWT_AUDIENCE: ${JWT_AUDIENCE}
+      # 容器内主机名是服务名 postgres。宿主机 IDE 用 .env 里的 localhost URL。
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    # 运行镜像是 Alpine JRE，使用已有的 /api/health，不额外安装 curl。
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/api/health | grep -q '\"data\":\"OK\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    networks:
+      - analyzer-network
+
+# ============================================
+# 命名卷（数据持久化）
+# ============================================
 volumes:
-  pgvector_data:
+  postgres-data:
+    name: analyzer-postgres-data
+  redis-data:
+    name: analyzer-redis-data
+  keycloak-data:
+    name: analyzer-keycloak-data
 
+# ============================================
+# 网络
+# ============================================
 networks:
-  analyzer_network:
+  analyzer-network:
+    name: analyzer-network
     driver: bridge
+
+# ============================================
+# 使用说明
+# ============================================
+# 1. 启动所有服务（应用 + 依赖）:
+#    docker compose up -d
+#
+# 2. 仅启动依赖服务（方便 IDE 调试应用）:
+#    docker compose up -d postgres redis keycloak
+#    MinIO 暂时未启用。然后在 IDE 中启动 Spring Boot 应用。
+#
+# 3. 查看日志:
+#    docker compose logs -f app
+#
+# 4. 停止所有服务:
+#    docker compose down
+#
+# 5. 停止并删除所有数据:
+#    docker compose down -v
