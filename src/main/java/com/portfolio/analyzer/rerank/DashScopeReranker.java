@@ -16,6 +16,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -25,6 +26,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 调用阿里云百炼原生 text-rerank。
@@ -118,7 +125,7 @@ public class DashScopeReranker implements RerankerPort {
     }
 
     private List<Scored> doRerank(String query, List<VectorStorePort.SearchResult> candidates, int topK)
-            throws IOException, InterruptedException {
+            throws IOException {
         if (query == null || query.isBlank()) {
             throw new RerankFailedException("rerank query is blank");
         }
@@ -145,6 +152,7 @@ public class DashScopeReranker implements RerankerPort {
         String payload = objectMapper.writeValueAsString(requestBody(model, query, pool, topK));
 
         HttpRequest request = HttpRequest.newBuilder(endpoint)
+                // JDK-8208693：这个 timeout 只覆盖到响应头。正文用下面的总截止时间。
                 .timeout(Duration.ofMillis(timeoutMs))
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
@@ -155,11 +163,30 @@ public class DashScopeReranker implements RerankerPort {
         logger.info("Calling DashScope rerank: model={}, documents={}, topN={}, timeoutMs={}",
                 model, pool.size(), Math.min(topK, pool.size()), timeoutMs);
 
-        HttpResponse<String> response;
+        StringBody bodySubscriber = new StringBody();
+        CompletableFuture<HttpResponse<String>> pending = httpClient.sendAsync(request, info -> bodySubscriber);
+        final HttpResponse<String> response;
         try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        } catch (HttpTimeoutException ex) {
+            response = pending.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException ex) {
+            abort(bodySubscriber, pending);
             throw new RerankFailedException("rerank timeout", ex);
+        } catch (InterruptedException ex) {
+            abort(bodySubscriber, pending);
+            Thread.currentThread().interrupt();
+            throw new RerankFailedException("rerank interrupted", ex);
+        } catch (ExecutionException ex) {
+            Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+            if (cause instanceof HttpTimeoutException || cause instanceof TimeoutException) {
+                abort(bodySubscriber, pending);
+                throw new RerankFailedException("rerank timeout", cause);
+            }
+            if (cause instanceof InterruptedException interrupted) {
+                abort(bodySubscriber, pending);
+                Thread.currentThread().interrupt();
+                throw new RerankFailedException("rerank interrupted", interrupted);
+            }
+            throw new RerankFailedException("rerank call failed", cause);
         }
 
         String body = response.body() == null ? "" : response.body();
@@ -215,7 +242,8 @@ public class DashScopeReranker implements RerankerPort {
         for (JsonNode item : results) {
             JsonNode indexNode = item.get("index");
             JsonNode scoreNode = item.get("relevance_score");
-            if (indexNode == null || !indexNode.isIntegralNumber() || scoreNode == null || !scoreNode.isNumber()) {
+            if (indexNode == null || !indexNode.isIntegralNumber() || !indexNode.canConvertToInt()
+                    || scoreNode == null || !scoreNode.isNumber()) {
                 throw new RerankFailedException("rerank result missing index or relevance_score");
             }
             int index = indexNode.asInt();
@@ -255,6 +283,63 @@ public class DashScopeReranker implements RerankerPort {
             summary.append(scored.result().id()).append('=').append(scored.score());
         }
         return summary.toString();
+    }
+
+    /**
+     * 取消未完成的交换。先取消 body 订阅，连接会立刻断开；
+     * 响应头还没到时订阅可能尚未建立，再 cancel future，让 HttpClient 中止这次请求。
+     * 不额外起线程，选择器线程是客户端自己的，请求结束后可以继续复用。
+     */
+    private static void abort(StringBody subscriber, CompletableFuture<?> pending) {
+        try {
+            subscriber.cancel();
+        } catch (RuntimeException ignored) {
+            // 取消失败也不能挡住降级。
+        }
+        pending.cancel(true);
+    }
+
+    /**
+     * 包一层 ofString，暴露 {@link Flow.Subscription#cancel()}。
+     * 只 cancel future 关不掉已经开始读的正文。
+     */
+    private static final class StringBody implements HttpResponse.BodySubscriber<String> {
+        private final HttpResponse.BodySubscriber<String> delegate =
+                HttpResponse.BodySubscribers.ofString(StandardCharsets.UTF_8);
+        private volatile Flow.Subscription subscription;
+
+        @Override
+        public CompletionStage<String> getBody() {
+            return delegate.getBody();
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription subscription) {
+            this.subscription = subscription;
+            delegate.onSubscribe(subscription);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> item) {
+            delegate.onNext(item);
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+            delegate.onError(throwable);
+        }
+
+        @Override
+        public void onComplete() {
+            delegate.onComplete();
+        }
+
+        void cancel() {
+            Flow.Subscription current = subscription;
+            if (current != null) {
+                current.cancel();
+            }
+        }
     }
 
     private static String trimToEmpty(String value) {

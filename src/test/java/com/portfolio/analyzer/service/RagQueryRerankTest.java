@@ -209,6 +209,97 @@ class RagQueryRerankTest {
     }
 
     @Test
+    void fallsBackWhenResponseBodyStalls() {
+        when(vectorStore.searchSimilar(any(), any(float[].class), anyInt(), anyDouble()))
+                .thenReturn(List.of(hit("near", 0.1), hit("far", 0.4)));
+        server.enqueue(json(200, """
+                {"output":{"results":[
+                  {"index":1,"relevance_score":0.99},
+                  {"index":0,"relevance_score":0.5}
+                ]}}
+                """).setBodyDelay(5, TimeUnit.SECONDS));
+
+        long started = System.nanoTime();
+        RagQueryResponse response = service.queryWithContext(principal, "question");
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+
+        assertThat(elapsedMs).isBetween(400L, 2500L);
+        assertThat(response.isReranked()).isFalse();
+        assertThat(response.getSources()).extracting(RagQueryResponse.DocumentSource::getExcerpt)
+                .containsExactly("near", "far");
+        assertThat(fallbackCount()).isEqualTo(1.0);
+        assertThat(response.getAnswer()).isEqualTo("answer");
+    }
+
+    @Test
+    void fallsBackOn4xx() {
+        when(vectorStore.searchSimilar(any(), any(float[].class), anyInt(), anyDouble()))
+                .thenReturn(List.of(hit("near", 0.1), hit("far", 0.4)));
+        server.enqueue(json(400, "{\"code\":\"InvalidParameter\",\"message\":\"bad request\",\"request_id\":\"req-400\"}"));
+
+        RagQueryResponse response = service.queryWithContext(principal, "question");
+
+        assertThat(response.isReranked()).isFalse();
+        assertThat(response.getSources()).extracting(RagQueryResponse.DocumentSource::getExcerpt)
+                .containsExactly("near", "far");
+        assertThat(fallbackCount()).isEqualTo(1.0);
+    }
+
+    @Test
+    void fallsBackWhenIndexIsDuplicated() {
+        when(vectorStore.searchSimilar(any(), any(float[].class), anyInt(), anyDouble()))
+                .thenReturn(List.of(hit("near", 0.1), hit("far", 0.4)));
+        server.enqueue(json(200, """
+                {"output":{"results":[
+                  {"index":0,"relevance_score":0.9},
+                  {"index":0,"relevance_score":0.4}
+                ]}}
+                """));
+
+        RagQueryResponse response = service.queryWithContext(principal, "question");
+
+        assertThat(response.isReranked()).isFalse();
+        assertThat(response.getSources()).extracting(RagQueryResponse.DocumentSource::getExcerpt)
+                .containsExactly("near", "far");
+        assertThat(fallbackCount()).isEqualTo(1.0);
+    }
+
+    @Test
+    void fallsBackWhenIndexDoesNotFitInInt() {
+        when(vectorStore.searchSimilar(any(), any(float[].class), anyInt(), anyDouble()))
+                .thenReturn(List.of(hit("near", 0.1), hit("far", 0.4)));
+        server.enqueue(json(200, """
+                {"output":{"results":[{"index":4294967296,"relevance_score":0.9}]}}
+                """));
+
+        RagQueryResponse response = service.queryWithContext(principal, "question");
+
+        assertThat(response.isReranked()).isFalse();
+        assertThat(response.getSources()).extracting(RagQueryResponse.DocumentSource::getExcerpt)
+                .containsExactly("near", "far");
+        assertThat(fallbackCount()).isEqualTo(1.0);
+    }
+
+    @Test
+    void fallsBackWhenApiKeyIsBlank() {
+        var embeddingModel = mock(org.springframework.ai.embedding.EmbeddingModel.class);
+        when(embeddingModel.embed(anyString())).thenReturn(new float[]{1f, 0f, 0f, 0f});
+        DashScopeReranker reranker = new DashScopeReranker(ragConfig, objectMapper, "  ");
+        RagQueryService blankKey = new RagQueryService(
+                vectorStore, embeddingModel, aiClient, ragConfig, new NoopReranker(), reranker, meterRegistry);
+        when(vectorStore.searchSimilar(any(), any(float[].class), anyInt(), anyDouble()))
+                .thenReturn(List.of(hit("near", 0.1), hit("far", 0.4)));
+
+        RagQueryResponse response = blankKey.queryWithContext(principal, "question");
+
+        assertThat(response.isReranked()).isFalse();
+        assertThat(response.getSources()).extracting(RagQueryResponse.DocumentSource::getExcerpt)
+                .containsExactly("near", "far");
+        assertThat(server.getRequestCount()).isZero();
+        assertThat(fallbackCount()).isEqualTo(1.0);
+    }
+
+    @Test
     void fallsBackOn5xx() {
         when(vectorStore.searchSimilar(any(), any(float[].class), anyInt(), anyDouble()))
                 .thenReturn(List.of(hit("near", 0.1), hit("far", 0.4)));
