@@ -6,6 +6,7 @@ import com.portfolio.analyzer.dto.DocumentPage;
 import com.portfolio.analyzer.dto.SourceType;
 import com.portfolio.analyzer.repository.VectorStorePort;
 import com.portfolio.analyzer.security.TenantPrincipal;
+import com.portfolio.analyzer.security.TenantSession;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +44,9 @@ class DocumentIngestionServiceTest {
     
     @Mock
     private JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private TenantSession tenantSession;
     
     private DocumentIngestionService ingestionService;
     private TenantPrincipal testPrincipal;
@@ -54,7 +58,7 @@ class DocumentIngestionServiceTest {
         
         ingestionService = new DocumentIngestionService(
                 vectorStore, embeddingModel, ragConfig,
-                extractionService, chunkingService, jdbcTemplate
+                extractionService, chunkingService, jdbcTemplate, tenantSession
         );
         
         testPrincipal = new TenantPrincipal("test-tenant", "test-user", Set.of(), Set.of("group1"));
