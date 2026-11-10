@@ -6,8 +6,8 @@
 
 本项目分四个阶段迭代开发：
 
-- **Stage 1（当前阶段）**：基础多模态分析 - 图片/PDF 上传 + 视觉语言模型问答
-- **Stage 2**：多模态 RAG - 集成 pgvector 向量数据库，实现文档检索增强生成
+- **Stage 1（已完成）**：基础多模态分析 - 图片/PDF 上传 + 视觉语言模型问答
+- **Stage 2（当前阶段）**：多模态 RAG - 集成 pgvector 向量数据库，实现文档检索增强生成
 - **Stage 3**：Agent 工具调用 - 集成 OCR、表格提取、计算器、图表生成等工具
 - **Stage 4**：评估与优化 - 准确率测试、性能优化、监控告警、容器化部署
 
@@ -24,6 +24,15 @@
 - ✅ **结构化日志**：JSON 格式日志（生产环境），可读格式（开发环境）
 - ✅ 完整的错误处理和参数验证
 - ✅ 单元测试和集成测试覆盖
+
+## ✨ Stage 2 功能特性
+
+- ✅ 集成 PostgreSQL + pgvector 向量数据库（Flyway V2：`document` / `chunk`）
+- ✅ 文档按页切块，1024 维 `text-embedding-v4` 向量入库
+- ✅ RAG 问答，带来源（页码、文件名、相似度），租户与 ACL 在 SQL 中过滤
+- ✅ `owner_user_id` 在 document 和 chunk 上均为 NOT NULL
+- ✅ Docker Compose 启动本机 pgvector
+- ✅ Stage 1 的 `/api/v1/analyze` 保持可用
 
 ## 🏗 系统架构
 
@@ -72,8 +81,12 @@ graph TB
 | 核心框架 | Spring Boot | 3.2.0 | Web 应用框架 |
 | 语言 | Java | 17+ | 开发语言 |
 | AI 集成 | Spring AI | 1.0.0-M3 | AI 模型调用抽象层 |
-| LLM 服务 | 阿里云百炼 | qwen-vl-max | 视觉语言模型 |
+| LLM 服务 | 阿里云百炼 | qwen-vl-max / qwen-plus | 视觉模型与 RAG 文本模型 |
+| Embedding | 阿里云百炼 | text-embedding-v4 | 1024 维文本向量 |
+| 向量数据库 | PostgreSQL + pgvector | pg16 | 向量存储和检索 |
+| 迁移 | Flyway | Boot 管理 | V1 扩展，V2 RAG 表 |
 | PDF 处理 | Apache PDFBox | 3.0.1 | PDF 渲染 |
+| 容器化 | Docker Compose | - | 本机 pgvector |
 | 构建工具 | Maven | 3.9+ | 项目构建 |
 | 测试框架 | JUnit 5 + Mockito | - | 单元/集成测试 |
 
@@ -83,7 +96,7 @@ graph TB
 
 - Java 17 或更高版本
 - Maven 3.6 或更高版本
-- PostgreSQL 13+ 或使用内存数据库（测试环境）
+- Docker 与 Docker Compose（本机 pgvector），或自行准备的 PostgreSQL 13+
 - 阿里云 DashScope API Key（[获取地址](https://dashscope.aliyun.com/)）
 
 ### 1. 克隆项目
@@ -129,7 +142,17 @@ export FLYWAY_ENABLED="false"
 
 复制 `src/main/resources/application-dev.yml.example` 为 `application-dev.yml` 并根据需要修改。
 
-### 3. 初始化数据库（生产环境）
+### 3. 初始化数据库
+
+本机可以用 Compose 启动 pgvector（应用通过 `DATABASE_*` 连接，不要再用 `DB_*`）：
+
+```bash
+cp .env.example .env
+docker compose up -d
+docker compose ps
+```
+
+生产环境也可以手工建库。Flyway 会在应用启动时执行 V1（`vector` 扩展）和 V2（RAG 表）。
 
 ```bash
 # 创建数据库
@@ -166,6 +189,7 @@ curl -X POST http://localhost:8080/api/v1/analyze \
   -H "X-Tenant-Id: tenant1" \
   -H "X-User-Id: user1" \
   -H "X-Roles: admin,user" \
+  -H "X-Groups: group-a" \
   -F "file=@example.jpg" \
   -F "question=这张图片的内容是什么？"
 ```
@@ -216,54 +240,6 @@ curl -X POST http://localhost:8080/api/v1/analyze \
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/analyze \
-=======
-在浏览器中打开：http://localhost:8080
-
-## 📖 API 接口规范
-
-### 接口概览
-
-| 接口路径 | 方法 | 说明 | 状态 |
-|---------|------|------|------|
-| `/api/v1/analyze` | POST | 文档分析接口（当前版本） | ✅ 推荐使用 |
-| `/api/analyze` | POST | 文档分析接口（旧版本） | ⚠️ 已废弃 |
-| `/api/health` | GET | 健康检查接口 | ✅ 正常 |
-
-### 统一响应体格式
-
-所有 API 接口均返回统一的响应体结构：
-
-```json
-{
-  "code": "00000",
-  "message": "成功",
-  "data": { ... },
-  "traceId": "a1b2c3d4e5f6..."
-}
-```
-
-**字段说明：**
-- `code`：错误码，成功为 `"00000"`，错误格式为 `E + HTTP状态码 + 序号`
-- `message`：响应消息，成功或错误描述
-- `data`：业务数据，成功时返回，失败时为 `null`
-- `traceId`：请求追踪 ID，用于日志关联和问题排查
-
-### 请求追踪
-
-每个请求都会自动生成一个 `traceId`，用于关联请求日志：
-
-- **自动生成**：如果请求头中没有 `X-Request-Id`，系统会自动生成一个 UUID
-- **透传机制**：如果请求头包含 `X-Request-Id`，系统会原样透传作为 traceId
-- **响应头返回**：响应头 `X-Trace-Id` 会返回本次请求的 traceId
-- **日志关联**：所有日志中都会包含 traceId，便于问题排查
-
-### API 使用示例
-
-#### 1. 分析图片（推荐使用 v1 接口）
-
-```bash
-curl -X POST http://localhost:8080/api/v1/analyze \
->>>>>>> origin/main
   -H "X-Request-Id: my-custom-trace-id-12345" \
   -F "file=@example.jpg" \
   -F "question=这张图片中的内容是什么？"
@@ -411,6 +387,50 @@ Link: </api/v1/analyze>; rel="successor-version"
 }
 ```
 
+## 📖 Stage 2 API
+
+开发环境用 `X-Tenant-Id`、`X-User-Id`、`X-Roles`、`X-Groups`。生产环境改用 `Authorization: Bearer`。响应包在统一的 `ApiResponse` 里。`owner_user_id` 来自当前用户，不能为空。
+
+### 入库
+
+```bash
+curl -X POST http://localhost:8080/api/v1/rag/ingest \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: user" \
+  -H "X-Groups: group-a" \
+  -F "file=@knowledge.txt" \
+  -F "source=knowledge-base"
+```
+
+```json
+{
+  "code": "00000",
+  "message": "成功",
+  "data": {
+    "documentId": "6f1c...",
+    "pagesProcessed": 1,
+    "chunksProcessed": 1,
+    "processingTimeMs": 120
+  },
+  "traceId": "..."
+}
+```
+
+### 检索增强问答
+
+```bash
+curl -X POST http://localhost:8080/api/v1/rag/query \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: user" \
+  -H "X-Groups: group-a" \
+  -d '{"question": "Spring AI 是什么？"}'
+```
+
+`data.sources[]` 包含 `excerpt`、`source`、`fileName`、`pageNumber`、`similarity`、`contentType`。缺租户时返回 `E40102`。
+
 ## 🧪 测试
 
 ### 运行所有测试
@@ -432,6 +452,7 @@ mvn verify
 - ✅ AI 客户端参数验证测试
 - ✅ 文档分析服务集成测试
 - ✅ API 控制器集成测试
+- ✅ RAG 入库、检索、租户隔离与 ACL（`RagEndToEndIT`，Testcontainers pgvector）
 
 ## 🔍 核心设计决策（面试要点）
 
@@ -562,15 +583,23 @@ image-text-analyzer/
 │   ├── main/
 │   │   ├── java/com/portfolio/analyzer/
 │   │   │   ├── AnalyzerApplication.java          # 启动类
-│   │   │   ├── controller/
-│   │   │   │   └── AnalysisController.java      # API 控制器
-│   │   │   ├── service/
-│   │   │   │   ├── DocumentAnalysisService.java # 文档分析服务
-│   │   │   │   └── ImageProcessingService.java  # 图片处理服务
 │   │   │   ├── ai/
-│   │   │   │   └── MultimodalAIClient.java      # 使用自动配置的 ChatClient.Builder / OpenAiApi
+│   │   │   │   └── MultimodalAIClient.java      # VLM 用自动配置的 ChatClient.Builder；文本模型注入 OpenAiChatModel
+│   │   │   ├── config/
+│   │   │   │   └── RagConfig.java               # RAG 配置
+│   │   │   ├── controller/
+│   │   │   │   ├── AnalysisController.java      # 分析 API
+│   │   │   │   └── RagController.java           # /api/v1/rag
+│   │   │   ├── repository/
+│   │   │   │   ├── VectorStorePort.java         # chunk 读写端口
+│   │   │   │   └── JdbcVectorStorePort.java     # 显式 tenant/ACL SQL
+│   │   │   ├── service/
+│   │   │   │   ├── DocumentIngestionService.java
+│   │   │   │   └── RagQueryService.java
 │   │   │   ├── dto/
-│   │   │   │   └── AnalysisResponse.java        # 响应 DTO
+│   │   │   │   ├── AnalysisResponse.java        # 响应 DTO
+│   │   │   │   ├── RagQueryRequest.java
+│   │   │   │   └── RagQueryResponse.java
 │   │   │   └── exception/
 │   │   │       ├── GlobalExceptionHandler.java  # 全局异常处理
 │   │   │       ├── InvalidFileTypeException.java
@@ -588,11 +617,14 @@ image-text-analyzer/
 │       │   ├── ai/
 │       │   │   └── MultimodalAIClientTest.java
 │       │   ├── controller/
-│       │   │   └── AnalysisControllerTest.java
+│       │   │   ├── AnalysisControllerTest.java
+│       │   │   └── RagControllerTest.java
 │       │   └── TestDataGenerator.java           # 测试数据生成器
 │       └── resources/
 │           ├── test-data/                        # 测试数据
 │           └── application-test.yml              # 测试配置
+├── docker-compose.yml                            # 本机 pgvector
+├── .env.example
 ├── pom.xml
 ├── .gitignore
 ├── README.md
@@ -601,17 +633,17 @@ image-text-analyzer/
 
 ## 🗺 开发路线图
 
-### Stage 2: 多模态 RAG（计划中）
+### Stage 2: 多模态 RAG（本 PR）
 
-- [ ] 集成 PostgreSQL + pgvector 向量数据库
-- [ ] 实现文档分块和向量化（文本 + 图片）
-- [ ] 构建检索增强生成（RAG）流程
-- [ ] 添加历史对话管理
+- ✅ PostgreSQL + pgvector，Flyway V2 建 `document` / `chunk`
+- ✅ 按页切块与 1024 维向量入库
+- ✅ 检索增强生成，SQL 里按租户和 ACL 过滤
+- [ ] 历史对话（后续 PR，排在 V4；RLS 是 V3，单独 PR）
 
 **技术要点**：
-- 使用 Spring Data JPA + pgvector 扩展
-- 文本和图片混合向量检索
-- 相关性排序和重排序（Reranking）
+- `VectorStorePort` / `JdbcVectorStorePort`，安全列是真实列而不是 JSONB
+- 唯一约束 `(tenant_id, doc_id, chunk_index)` 同时覆盖 tenant 前缀，不另建 `idx_chunk_tenant`
+- `owner_user_id` NOT NULL；`updateDocumentAcl` 拒绝 null owner（HTTP 400）
 
 ### Stage 3: Agent 工具调用（计划中）
 
@@ -676,12 +708,24 @@ spring:
         options:
           model: qwen-vl-max
           temperature: 0.7
+      embedding:
+        options:
+          model: text-embedding-v4
+          dimensions: 1024
   
 app:
   analysis:
     max-pdf-pages: 10
     max-file-size-mb: 10
     pdf-render-dpi: 150
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    chat-model: qwen-plus
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
 
   # JWT 资源服务器（不要写到 spring.security.oauth2.resourceserver.jwt.*）
   security:

@@ -23,6 +23,7 @@
         <spring-ai.version>1.0.0-M3</spring-ai.version>
         <pdfbox.version>3.0.1</pdfbox.version>
         <testcontainers.version>1.21.4</testcontainers.version>
+        <tika.version>2.9.1</tika.version>
     </properties>
 
     <dependencies>
@@ -38,14 +39,13 @@
             <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
         
-        <!-- PostgreSQL Driver -->
+        <!-- PostgreSQL Driver (compile scope: JdbcVectorStorePort uses PGobject) -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <scope>runtime</scope>
         </dependency>
         
-        <!-- Flyway Migration -->
+        <!-- Flyway Migration (version managed by Spring Boot) -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
@@ -61,6 +61,19 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- Spring JDBC -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
+        <!-- Apache Tika for file type detection -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>${tika.version}</version>
         </dependency>
 
         <!-- Apache PDFBox for PDF processing -->
@@ -111,7 +124,7 @@
             <scope>test</scope>
         </dependency>
         
-        <!-- Testcontainers -->
+        <!-- Testcontainers (versions from the 1.21.4 BOM) -->
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers</artifactId>

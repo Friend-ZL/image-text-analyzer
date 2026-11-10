@@ -4,8 +4,9 @@ spring:
       api-key: test-api-key
       base-url: http://127.0.0.1:9
 
-  # 这个文件在测试 classpath 上覆盖 src/main/resources/application-test.yml。
-  # 必须在这里关掉 Flyway 并改用 H2，否则测试会去连 localhost:5432。
+  # 单元测试默认使用 H2，不连 Postgres、不跑 Flyway。
+  # 需要真实 pgvector 的 IT（RagEndToEndIT、FlywayMigrationIT）在 @DynamicPropertySource 里覆盖
+  # url、username、password、driver-class-name、hibernate.dialect 和 flyway.enabled。
   flyway:
     enabled: false
 
@@ -30,3 +31,23 @@ app:
   analysis:
     max-pdf-pages: 5
     max-file-size-mb: 5
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    max-ingest-size-mb: 10
+    max-pdf-pages: 50
+    chat-model: qwen-plus
+    vlm-model: qwen-vl-max
+    min-text-length-for-ocr: 50
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
+    hnsw-ef-search: 100
+
+logging:
+  level:
+    com.portfolio.analyzer: DEBUG
+    org.springframework.ai: INFO
+    org.flywaydb: INFO
+    org.testcontainers: INFO

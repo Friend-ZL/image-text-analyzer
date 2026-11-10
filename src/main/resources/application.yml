@@ -13,6 +13,10 @@ spring:
     username: ${DATABASE_USERNAME:analyzer}
     password: ${DATABASE_PASSWORD:analyzer}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+      pool-name: analyzer-pg
   
   # JPA 配置 - 关闭自动 DDL
   jpa:
@@ -43,7 +47,11 @@ spring:
         options:
           model: qwen-vl-max
           temperature: 0.7
-  
+      embedding:
+        options:
+          model: text-embedding-v4
+          dimensions: 1024
+
 app:
   analysis:
     max-pdf-pages: 10
@@ -51,6 +59,20 @@ app:
     supported-image-types: image/jpeg,image/png,image/gif,image/webp,image/jpg
     supported-file-types: image/jpeg,image/png,image/gif,image/webp,image/jpg,application/pdf
     pdf-render-dpi: 150
+
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    max-ingest-size-mb: 10
+    max-pdf-pages: 50
+    chat-model: qwen-plus
+    vlm-model: qwen-vl-max
+    min-text-length-for-ocr: 50
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
+    hnsw-ef-search: 100
   
   # JWT 资源服务器。留空时非 dev/local 启动失败。
   # 不要把这些值写进 spring.security.oauth2.resourceserver.jwt.*：
@@ -75,3 +97,4 @@ logging:
   level:
     com.portfolio.analyzer: INFO
     org.springframework.ai: INFO
+    org.flywaydb: INFO
