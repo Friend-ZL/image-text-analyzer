@@ -23,11 +23,17 @@ public enum ErrorCode {
     QUESTION_EMPTY("E40003", "问题不能为空", HttpStatus.BAD_REQUEST),
     // E40004~E40009 预留：参数校验相关
     
-    // RAG/向量存储相关 (E401xx)
-    // E40100~E40119 预留：RAG 查询、向量检索相关错误，由后续 PR 填充
+    // 鉴权相关 - 未认证 (E401xx)
+    UNAUTHORIZED("E40101", "未认证或令牌无效", HttpStatus.UNAUTHORIZED),
+    TENANT_MISSING("E40102", "租户信息缺失", HttpStatus.UNAUTHORIZED),
+    // E40103~E40109 预留：认证相关
     
-    // 鉴权相关 (E403xx)
-    // E40300~E40319 预留：鉴权、权限相关错误，由后续 PR 填充
+    // RAG/向量存储相关 (E402xx)
+    // E40200~E40219 预留：RAG 查询、向量检索相关错误，由后续 PR 填充
+    
+    // 鉴权相关 - 权限不足 (E403xx)
+    FORBIDDEN("E40301", "无权限访问", HttpStatus.FORBIDDEN),
+    // E40302~E40319 预留：权限相关
     
     // 资源不存在 (E404xx)
     NOT_FOUND("E40401", "请求的资源不存在", HttpStatus.NOT_FOUND),
@@ -57,7 +63,10 @@ public enum ErrorCode {
     // E50003~E50009 预留：内部错误相关
     
     // 存储服务相关 (E501xx)
-    // E50100~E50119 预留：文件存储、向量存储等服务异常，由后续 PR 填充
+    DOCUMENT_INGESTION_FAILED("E50101", "文档入库失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    EMBEDDING_GENERATION_FAILED("E50102", "向量生成失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    VECTOR_SEARCH_FAILED("E50103", "向量检索失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    // E50104~E50119 预留：文件存储、向量存储等服务异常，由后续 PR 填充
     
     // 上游服务异常 (E502xx)
     MODEL_ERROR("E50201", "模型服务异常", HttpStatus.BAD_GATEWAY),

@@ -2,13 +2,13 @@ package com.portfolio.analyzer.exception;
 
 import com.portfolio.analyzer.common.ApiResponse;
 import com.portfolio.analyzer.common.ErrorCode;
+import com.portfolio.analyzer.security.TenantMissingException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
@@ -43,6 +43,15 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException ex) {
         logger.error("Business exception: {} - {}", ex.getErrorCode().getCode(), ex.getMessage());
         return buildErrorResponse(ex.getErrorCode(), ex.getErrorCode().getMessage());
+    }
+    
+    /**
+     * 处理租户信息缺失异常
+     */
+    @ExceptionHandler(TenantMissingException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTenantMissing(TenantMissingException ex) {
+        logger.error("Tenant missing: {}", ex.getMessage());
+        return buildErrorResponse(ErrorCode.TENANT_MISSING, ErrorCode.TENANT_MISSING.getMessage());
     }
     
     /**

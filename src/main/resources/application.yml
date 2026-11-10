@@ -6,7 +6,40 @@ spring:
       max-file-size: 10MB
       max-request-size: 10MB
       enabled: true
+  
+  # 数据源配置
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_db}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      connection-timeout: 3000
+      pool-name: analyzer-pg
+  
+  # JPA 配置 - 关闭自动 DDL
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  
+  # Flyway 配置
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    locations: classpath:db/migration
+  
+  # Spring AI pgvector - 关闭自动初始化
   ai:
+    vectorstore:
+      pgvector:
+        initialize-schema: false
     openai:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       api-key: ${DASHSCOPE_API_KEY:dummy-key-for-test}
@@ -14,6 +47,10 @@ spring:
         options:
           model: qwen-vl-max
           temperature: 0.7
+      embedding:
+        options:
+          model: text-embedding-v4
+          dimensions: 1024
 
 app:
   analysis:
@@ -23,6 +60,36 @@ app:
     supported-file-types: image/jpeg,image/png,image/gif,image/webp,image/jpg,application/pdf
     pdf-render-dpi: 150
 
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    max-ingest-size-mb: 10
+    max-pdf-pages: 50
+    chat-model: qwen-plus
+    vlm-model: qwen-vl-max
+    min-text-length-for-ocr: 50
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
+    hnsw-ef-search: 100
+  
+  # JWT 资源服务器。留空时非 dev/local 启动失败。
+  # 不要把这些值写进 spring.security.oauth2.resourceserver.jwt.*：
+  # 空字符串也会触发 Boot 的 decoder，并且不会校验 iss/aud。
+  security:
+    jwt:
+      issuer: ${JWT_ISSUER_URI:}
+      jwk-set-uri: ${JWT_JWK_SET_URI:}
+      audience: ${JWT_AUDIENCE:}
+      claims:
+        tenant-id: tenant_id
+        roles:
+          - realm_access.roles
+          - roles
+        groups:
+          - groups
+
 server:
   port: 8080
 
@@ -30,3 +97,4 @@ logging:
   level:
     com.portfolio.analyzer: INFO
     org.springframework.ai: INFO
+    org.flywaydb: INFO

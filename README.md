@@ -6,8 +6,8 @@
 
 本项目分四个阶段迭代开发：
 
-- **Stage 1（当前阶段）**：基础多模态分析 - 图片/PDF 上传 + 视觉语言模型问答
-- **Stage 2**：多模态 RAG - 集成 pgvector 向量数据库，实现文档检索增强生成
+- **Stage 1（已完成）**：基础多模态分析 - 图片/PDF 上传 + 视觉语言模型问答
+- **Stage 2（当前阶段）**：多模态 RAG - 集成 pgvector 向量数据库，实现文档检索增强生成
 - **Stage 3**：Agent 工具调用 - 集成 OCR、表格提取、计算器、图表生成等工具
 - **Stage 4**：评估与优化 - 准确率测试、性能优化、监控告警、容器化部署
 
@@ -18,8 +18,21 @@
 - ✅ 基于阿里云百炼 qwen-vl-max 视觉语言模型
 - ✅ OpenAI 兼容接口，可一键切换至 GPT-4o
 - ✅ 拖拽式上传的现代化前端界面
+- ✅ **企业级 API 规范**：统一响应体、错误码体系、请求追踪
+- ✅ **RESTful API 版本化**：`/api/v1/analyze`（当前），`/api/analyze`（已废弃但保留兼容）
+- ✅ **请求链路追踪**：每个请求自动生成 traceId，支持日志关联
+- ✅ **结构化日志**：JSON 格式日志（生产环境），可读格式（开发环境）
 - ✅ 完整的错误处理和参数验证
 - ✅ 单元测试和集成测试覆盖
+
+## ✨ Stage 2 功能特性
+
+- ✅ 集成 PostgreSQL + pgvector 向量数据库（Flyway V2：`document` / `chunk`）
+- ✅ 文档按页切块，1024 维 `text-embedding-v4` 向量入库
+- ✅ RAG 问答，带来源（页码、文件名、相似度），租户与 ACL 在 SQL 中过滤
+- ✅ `owner_user_id` 在 document 和 chunk 上均为 NOT NULL
+- ✅ Docker Compose 启动本机 pgvector
+- ✅ Stage 1 的 `/api/v1/analyze` 保持可用
 
 ## 🏗 系统架构
 
@@ -68,8 +81,12 @@ graph TB
 | 核心框架 | Spring Boot | 3.2.0 | Web 应用框架 |
 | 语言 | Java | 17+ | 开发语言 |
 | AI 集成 | Spring AI | 1.0.0-M3 | AI 模型调用抽象层 |
-| LLM 服务 | 阿里云百炼 | qwen-vl-max | 视觉语言模型 |
+| LLM 服务 | 阿里云百炼 | qwen-vl-max / qwen-plus | 视觉模型与 RAG 文本模型 |
+| Embedding | 阿里云百炼 | text-embedding-v4 | 1024 维文本向量 |
+| 向量数据库 | PostgreSQL + pgvector | pg16 | 向量存储和检索 |
+| 迁移 | Flyway | Boot 管理 | V1 扩展，V2 RAG 表 |
 | PDF 处理 | Apache PDFBox | 3.0.1 | PDF 渲染 |
+| 容器化 | Docker Compose | - | 应用、pgvector、Redis、Keycloak |
 | 构建工具 | Maven | 3.9+ | 项目构建 |
 | 测试框架 | JUnit 5 + Mockito | - | 单元/集成测试 |
 
@@ -79,6 +96,7 @@ graph TB
 
 - Java 17 或更高版本
 - Maven 3.6 或更高版本
+- Docker 与 Docker Compose（本机 pgvector），或自行准备的 PostgreSQL 13+
 - 阿里云 DashScope API Key（[获取地址](https://dashscope.aliyun.com/)）
 
 ### 1. 克隆项目
@@ -88,21 +106,64 @@ git clone <repository-url>
 cd image-text-analyzer
 ```
 
-### 2. 配置 API Key
+### 2. 配置环境变量
 
-**方式一：环境变量（推荐）**
+**生产环境（必需）**
+
+```bash
+# AI 服务
+export DASHSCOPE_API_KEY="your-api-key-here"
+
+# 数据库
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_db"
+export DATABASE_USERNAME="analyzer"
+export DATABASE_PASSWORD="your-password"
+
+# JWT 认证（从 Keycloak 或其他 OIDC Provider 获取）
+# 默认 profile 会校验 iss，以及 aud 或 azp。任一未配置都会拒绝启动。
+export JWT_ISSUER_URI="https://your-keycloak.com/realms/your-realm"
+export JWT_JWK_SET_URI="https://your-keycloak.com/realms/your-realm/protocol/openid-connect/certs"
+export JWT_AUDIENCE="image-text-analyzer"
+```
+
+**开发环境（可选）**
+
+开发环境使用 `dev` 或 `local` profile，通过请求头传递身份信息（不需要 JWT）。
+数据源必须是本机（localhost / 127.0.0.1 / ::1 或内嵌 H2）。不要与 `prod` 或 `production` 同时激活。
 
 ```bash
 export DASHSCOPE_API_KEY="your-api-key-here"
+export SPRING_PROFILES_ACTIVE="dev"
+
+# 可选：本机数据库（远程 DATABASE_URL 会导致 dev/local 拒绝启动）
+export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_dev"
+export FLYWAY_ENABLED="false"
 ```
 
-**方式二：系统属性**
+复制 `src/main/resources/application-dev.yml.example` 为 `application-dev.yml` 并根据需要修改。
+
+### 3. 初始化数据库
+
+本机可以用 Compose 只启动 pgvector（应用通过 `DATABASE_*` 连接，不要再用 `DB_*`）。完整栈见下方 Docker 章节。
 
 ```bash
-mvn spring-boot:run -DDASHSCOPE_API_KEY="your-api-key-here"
+cp .env.example .env
+docker compose up -d postgres
+docker compose ps
 ```
 
-### 3. 启动应用
+生产环境也可以手工建库。Flyway 会在应用启动时执行 V1（`vector` 扩展）和 V2（RAG 表）。默认库名是 `analyzer_db`。
+
+```bash
+# 创建数据库
+psql -U postgres -c "CREATE DATABASE analyzer_db;"
+psql -U postgres -c "CREATE USER analyzer WITH PASSWORD 'your-password';"
+psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE analyzer_db TO analyzer;"
+
+# Flyway 会在应用启动时自动运行迁移
+```
+
+### 4. 启动应用
 
 ```bash
 mvn spring-boot:run
@@ -110,116 +171,68 @@ mvn spring-boot:run
 
 应用将在 `http://localhost:8080` 启动。
 
-### 4. 访问界面
+### 5. 访问和测试
 
-在浏览器中打开：http://localhost:8080
+**生产环境**：需要在请求头中携带 JWT token
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "file=@example.jpg" \
+  -F "question=这张图片的内容是什么？"
+```
+
+**开发环境**：通过请求头传递身份信息
+
+```bash
+curl -X POST http://localhost:8080/api/v1/analyze \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: admin,user" \
+  -H "X-Groups: group-a" \
+  -F "file=@example.jpg" \
+  -F "question=这张图片的内容是什么？"
+```
+
+浏览器访问：http://localhost:8080
 
 ## 🐳 Docker 本地开发
 
-### 使用 Docker Compose 快速启动
-
-如果你更喜欢使用 Docker 进行本地开发，可以用 docker compose 启动应用、PostgreSQL、Redis 和 Keycloak。MinIO 暂时没有启用：公开镜像需要认证，compose 里对应服务已注释。
-
-#### 1. 复制环境变量模板
+Compose 启动应用、PostgreSQL、Redis 和 Keycloak。MinIO 暂时没有启用：公开镜像需要认证，对应服务已注释。
 
 ```bash
 cp .env.example .env
-```
-
-#### 2. 编辑 .env 文件
-
-打开 `.env` 文件，至少需要设置：
-- `DASHSCOPE_API_KEY`：你的阿里云 DashScope API Key（必填）
-- 其他密码可以保持默认值（仅用于本地开发）
-
-#### 3. 启动所有服务
-
-```bash
+# 至少改 DASHSCOPE_API_KEY，以及各密码占位值
 docker compose up -d
-```
-
-首次启动会构建应用镜像，可能需要几分钟时间。
-
-#### 4. 查看服务状态
-
-```bash
 docker compose ps
 ```
 
-所有服务应该显示为 `healthy` 状态。
+应用在容器里用 `prod` profile。数据源是 `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD`（容器内 URL 指向服务名 `postgres`，库名来自 `POSTGRES_DB`，默认 `analyzer_db`）。JWT 三个变量都要有值：
 
-#### 5. 访问应用
+| 变量 | 默认值 | 作用 |
+|------|--------|------|
+| `KC_HOSTNAME` | `http://localhost:8180` | 浏览器看到的 Keycloak 地址 |
+| `JWT_ISSUER_URI` | `http://localhost:8180/realms/analyzer` | 必须与 token 的 `iss` 一致 |
+| `JWT_JWK_SET_URI` | `http://keycloak:8080/realms/analyzer/protocol/openid-connect/certs` | 应用容器拉取公钥 |
+| `JWT_AUDIENCE` | `image-text-analyzer` | `aud` 包含该值，或 `azp` 等于该值 |
 
-- **应用界面**: http://localhost:8080
-- **应用健康检查**: http://localhost:8080/api/health
-- **Keycloak Admin**: http://localhost:8180（用户名/密码见 `.env` 的 `KC_BOOTSTRAP_ADMIN_*`）
+启动时导入 realm `analyzer`，里面有客户端 `image-text-analyzer`。`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`，所以 iss 仍是宿主机地址，JWK 可以走服务名。
 
-#### 6. 查看日志
-
-```bash
-# 查看应用日志
-docker compose logs -f app
-
-# 查看所有服务日志
-docker compose logs -f
-```
-
-#### 7. 停止服务
+在 IDE 里调试应用时只启动依赖，并把 `JWT_JWK_SET_URI` 改成 `http://localhost:8180/realms/analyzer/protocol/openid-connect/certs`：
 
 ```bash
-docker compose down
-```
-
-### 仅启动依赖服务（便于 IDE 调试）
-
-如果你想在 IDE 中调试应用，可以只启动依赖服务：
-
-```bash
-# 只启动 PostgreSQL、Redis、Keycloak（MinIO 暂时未启用）
 docker compose up -d postgres redis keycloak
-
-# 在 IDE 中启动 Spring Boot 应用
-mvn spring-boot:run
 ```
-
-这样可以方便地在 IDE 中设置断点和调试代码。
-
-### Docker 服务说明
 
 | 服务 | 镜像 | 端口 | 健康检查 |
 |------|------|------|----------|
 | 应用 | 本地构建（Alpine JRE） | 8080 | `wget` 访问 `/api/health` |
 | PostgreSQL | `pgvector/pgvector:0.8.6-pg16` | 5432 | `pg_isready` |
-| Redis | `redis:8.8.3-alpine` | 6379 | `redis-cli` |
-| Keycloak | `quay.io/keycloak/keycloak:26.8` | 8180 → 容器 8080 | 管理端口 9000 的 `/health/ready`（镜像无 curl，用 bash `/dev/tcp`） |
+| Redis | `redis:8.8.3-alpine` | 6379 | `redis-cli ping` |
+| Keycloak | `quay.io/keycloak/keycloak:26.8` | 8180 → 容器 8080 | 管理端口 9000 的 `/health/ready` |
 
-MinIO 暂时未包含在上述服务中。
+端口都绑在 `127.0.0.1`。Keycloak 管理台：http://localhost:8180（账号见 `KC_BOOTSTRAP_ADMIN_*`）。健康检查：http://localhost:8080/api/health。
 
-**注意**：所有端口都绑定到 `127.0.0.1`，仅本地访问，不会暴露到外网。
-
-### Keycloak 发行者与 JWT
-
-compose 以 `prod` profile 启动应用。非 dev profile 要求三个环境变量都有值（`app.security.jwt.issuer` / `jwk-set-uri` / `audience`）：
-
-| 变量 | compose 中的值 | 作用 |
-|------|----------------|------|
-| `KC_HOSTNAME` | `http://localhost:8180` | 固定 Keycloak 前端地址 |
-| `JWT_ISSUER_URI` | `http://localhost:8180/realms/master` | 必须与 token 的 `iss` 完全一致 |
-| `JWT_JWK_SET_URI` | `http://keycloak:8080/realms/master/protocol/openid-connect/certs` | 应用容器能访问的公钥地址 |
-| `JWT_AUDIENCE` | `image-text-analyzer` | `aud` 包含该值，或 `azp` 等于该值 |
-
-`KC_HOSTNAME` 使用浏览器看到的地址（宿主机 `8180`），不用容器内的 `keycloak:8080`。这样无论从浏览器还是从应用容器访问，token 的 `iss` 都是 `http://localhost:8180/realms/master`。`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` 让应用仍然可以通过服务名 `keycloak` 拉取 JWK。
-
-`JWT_AUDIENCE` 应对齐签发令牌的 Keycloak 客户端 ID。`start-dev` 只提供 `master` realm，不会自动创建 `image-text-analyzer` 客户端，需要在该 realm 里自行创建。占位值见 `.env.example`。
-
-当前分支在 `prod` 下额外设置 `SPRING_MAIN_ALLOW_BEAN_DEFINITION_OVERRIDING=true`。`AIConfig` 与 Spring AI 自动配置都注册了 `chatClientBuilder`，不打开这项应用会起不来。集成测试里已有同样设置。
-
-## 📖 API 使用示例
-
-### 分析图片
-
-```bash
-curl -X POST http://localhost:8080/api/analyze \
 ## 📖 API 接口规范
 
 ### 接口概览
@@ -337,6 +350,9 @@ Link: </api/v1/analyze>; rel="successor-version"
 | E40001 | 400 | 参数校验失败 | 必填参数缺失、格式不正确 |
 | E40002 | 400 | 文件不能为空 | 未上传文件或文件为空 |
 | E40003 | 400 | 问题不能为空 | question 参数为空或空白字符串 |
+| E40101 | 401 | 未认证或令牌无效 | 缺少 JWT token 或 token 无效/过期 |
+| E40102 | 401 | 租户信息缺失 | JWT token 中缺少 tenant_id claim |
+| E40301 | 403 | 无权限访问 | 用户已认证但无访问权限 |
 | E40401 | 404 | 请求的资源不存在 | 访问不存在的端点 |
 | E40501 | 405 | 不支持的请求方法 | 使用了不支持的 HTTP 方法（响应包含 `Allow` 头） |
 | E41301 | 413 | 文件大小超过限制 | 文件大小超过配置的上限 |
@@ -408,6 +424,50 @@ Link: </api/v1/analyze>; rel="successor-version"
 }
 ```
 
+## 📖 Stage 2 API
+
+开发环境用 `X-Tenant-Id`、`X-User-Id`、`X-Roles`、`X-Groups`。生产环境改用 `Authorization: Bearer`。响应包在统一的 `ApiResponse` 里。`owner_user_id` 来自当前用户，不能为空。
+
+### 入库
+
+```bash
+curl -X POST http://localhost:8080/api/v1/rag/ingest \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: user" \
+  -H "X-Groups: group-a" \
+  -F "file=@knowledge.txt" \
+  -F "source=knowledge-base"
+```
+
+```json
+{
+  "code": "00000",
+  "message": "成功",
+  "data": {
+    "documentId": "6f1c...",
+    "pagesProcessed": 1,
+    "chunksProcessed": 1,
+    "processingTimeMs": 120
+  },
+  "traceId": "..."
+}
+```
+
+### 检索增强问答
+
+```bash
+curl -X POST http://localhost:8080/api/v1/rag/query \
+  -H "Content-Type: application/json" \
+  -H "X-Tenant-Id: tenant1" \
+  -H "X-User-Id: user1" \
+  -H "X-Roles: user" \
+  -H "X-Groups: group-a" \
+  -d '{"question": "Spring AI 是什么？"}'
+```
+
+`data.sources[]` 包含 `excerpt`、`source`、`fileName`、`pageNumber`、`similarity`、`contentType`。缺租户时返回 `E40102`。
+
 ## 🧪 测试
 
 ### 运行所有测试
@@ -429,6 +489,7 @@ mvn verify
 - ✅ AI 客户端参数验证测试
 - ✅ 文档分析服务集成测试
 - ✅ API 控制器集成测试
+- ✅ RAG 入库、检索、租户隔离与 ACL（`RagEndToEndIT`，Testcontainers pgvector）
 
 ## 🔍 核心设计决策（面试要点）
 
@@ -520,3 +581,300 @@ mvn verify
 **分层架构**：Controller → Service → AI Client，职责清晰
 - Controller：处理 HTTP 请求和参数验证
 - Service：业务逻辑协调
+- AI Client：封装 AI 模型调用
+
+**配置外部化**：模型名称、API 端点、文件限制等都可通过配置文件调整
+
+**接口抽象**：为后续阶段预留扩展点
+```java
+// Stage 2: RAG 扩展
+interface VectorStore {
+    void store(Document doc);
+    List<Document> search(String query);
+}
+
+// Stage 3: 工具调用扩展
+interface AgentTool {
+    String execute(Map<String, Object> params);
+}
+```
+
+### 5. 错误处理策略
+
+- **参数验证前置**：文件类型、大小在服务层提前验证
+- **统一异常处理**：GlobalExceptionHandler 返回标准 JSON 错误格式
+- **AI 调用容错**：Spring AI 内置超时和重试机制
+- **安全考虑**：API Key 仅从环境变量读取，错误信息脱敏
+
+### 6. 测试策略
+
+- **单元测试**：使用 Mockito 模拟依赖，测试业务逻辑
+- **集成测试**：使用 `@WebMvcTest` 测试 API 端点
+- **无 API Key 测试**：Mock AI 客户端，避免测试依赖外部服务
+
+## 📁 项目结构
+
+```
+image-text-analyzer/
+├── src/
+│   ├── main/
+│   │   ├── java/com/portfolio/analyzer/
+│   │   │   ├── AnalyzerApplication.java          # 启动类
+│   │   │   ├── ai/
+│   │   │   │   └── MultimodalAIClient.java      # VLM 用自动配置的 ChatClient.Builder；文本模型注入 OpenAiChatModel
+│   │   │   ├── config/
+│   │   │   │   └── RagConfig.java               # RAG 配置
+│   │   │   ├── controller/
+│   │   │   │   ├── AnalysisController.java      # 分析 API
+│   │   │   │   └── RagController.java           # /api/v1/rag
+│   │   │   ├── repository/
+│   │   │   │   ├── VectorStorePort.java         # chunk 读写端口
+│   │   │   │   └── JdbcVectorStorePort.java     # 显式 tenant/ACL SQL
+│   │   │   ├── service/
+│   │   │   │   ├── DocumentIngestionService.java
+│   │   │   │   └── RagQueryService.java
+│   │   │   ├── dto/
+│   │   │   │   ├── AnalysisResponse.java        # 响应 DTO
+│   │   │   │   ├── RagQueryRequest.java
+│   │   │   │   └── RagQueryResponse.java
+│   │   │   └── exception/
+│   │   │       ├── GlobalExceptionHandler.java  # 全局异常处理
+│   │   │       ├── InvalidFileTypeException.java
+│   │   │       ├── FileSizeLimitException.java
+│   │   │       └── AIServiceException.java
+│   │   └── resources/
+│   │       ├── application.yml                   # 应用配置
+│   │       └── static/
+│   │           └── index.html                    # 前端页面
+│   └── test/
+│       ├── java/com/portfolio/analyzer/
+│       │   ├── service/
+│       │   │   ├── ImageProcessingServiceTest.java
+│       │   │   └── DocumentAnalysisServiceTest.java
+│       │   ├── ai/
+│       │   │   └── MultimodalAIClientTest.java
+│       │   ├── controller/
+│       │   │   ├── AnalysisControllerTest.java
+│       │   │   └── RagControllerTest.java
+│       │   └── TestDataGenerator.java           # 测试数据生成器
+│       └── resources/
+│           ├── test-data/                        # 测试数据
+│           └── application-test.yml              # 测试配置
+├── docker-compose.yml                            # 本机 pgvector
+├── .env.example
+├── pom.xml
+├── .gitignore
+├── README.md
+└── 文档-多模态文档分析Agent设计.md          # 详细设计文档
+```
+
+## 🗺 开发路线图
+
+### Stage 2: 多模态 RAG（本 PR）
+
+- ✅ PostgreSQL + pgvector，Flyway V2 建 `document` / `chunk`
+- ✅ 按页切块与 1024 维向量入库
+- ✅ 检索增强生成，SQL 里按租户和 ACL 过滤
+- [ ] 历史对话（后续 PR，排在 V4；RLS 是 V3，单独 PR）
+
+**技术要点**：
+- `VectorStorePort` / `JdbcVectorStorePort`，安全列是真实列而不是 JSONB
+- 唯一约束 `(tenant_id, doc_id, chunk_index)` 同时覆盖 tenant 前缀，不另建 `idx_chunk_tenant`
+- `owner_user_id` NOT NULL；`updateDocumentAcl` 拒绝 null owner（HTTP 400）
+
+### Stage 3: Agent 工具调用（计划中）
+
+- [ ] OCR 工具：Tess4J 提取图片中的文字
+- [ ] 表格提取：识别表格结构并转为结构化数据
+- [ ] 计算器：处理数学表达式计算
+- [ ] 图表生成：根据数据生成可视化图表
+
+**技术要点**：
+- Spring AI 的 Function Calling 机制
+- 工具调用的可观测性（tracing）
+- 多工具协同决策
+
+### Stage 4: 评估与优化（计划中）
+
+- [ ] 构建测试集并评估准确率
+- [ ] 添加缓存机制（Redis）减少重复调用
+- [ ] 实现批处理提高吞吐量
+- [ ] 添加监控和日志（Prometheus + Grafana）
+- [ ] Docker 容器化和云部署
+
+**技术要点**：
+- 使用 LangSmith/Weights & Biases 进行评估
+- Redis 缓存策略
+- 容器化部署最佳实践
+
+## 🔐 安全说明
+
+- ⚠️ **切勿将 API Key 提交到代码仓库**
+- ✅ 始终使用环境变量或密钥管理服务
+- ✅ 文件上传限制：最大 10MB，仅支持图片和 PDF
+- ✅ 错误信息中不包含敏感信息（API Key、内部路径等）
+
+## 📝 配置说明
+
+### 核心配置项（application.yml）
+
+```yaml
+spring:
+  # 数据源配置
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_db}
+    username: ${DATABASE_USERNAME:analyzer}
+    password: ${DATABASE_PASSWORD:analyzer}
+  
+  # JPA 配置（由 Flyway 管理 schema）
+  jpa:
+    hibernate:
+      ddl-auto: none
+  
+  # Flyway 数据库迁移
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+  
+  # Spring AI
+  ai:
+    openai:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: ${DASHSCOPE_API_KEY}
+      chat:
+        options:
+          model: qwen-vl-max
+          temperature: 0.7
+      embedding:
+        options:
+          model: text-embedding-v4
+          dimensions: 1024
+  
+app:
+  analysis:
+    max-pdf-pages: 10
+    max-file-size-mb: 10
+    pdf-render-dpi: 150
+  rag:
+    chunk-size: 500
+    chunk-overlap: 50
+    top-k: 3
+    similarity-threshold: 0.7
+    chat-model: qwen-plus
+    embedding-model: text-embedding-v4
+    embedding-dimensions: 1024
+
+  # JWT 资源服务器（不要写到 spring.security.oauth2.resourceserver.jwt.*）
+  security:
+    jwt:
+      issuer: ${JWT_ISSUER_URI:}
+      jwk-set-uri: ${JWT_JWK_SET_URI:}
+      audience: ${JWT_AUDIENCE:}
+      claims:
+        tenant-id: tenant_id              # 租户 ID claim 名称
+        roles:                             # 角色 claim 名称列表
+          - realm_access.roles             # Keycloak realm 角色
+          - roles                          # 标准 roles claim
+        groups:                            # 用户组 claim 名称列表
+          - groups
+```
+
+### 鉴权配置说明
+
+#### 生产环境（JWT 认证）
+
+必须配置以下环境变量，否则应用拒绝启动：
+
+- `JWT_ISSUER_URI`：期望的 `iss`（如 Keycloak realm URL）
+- `JWT_JWK_SET_URI`：JWK Set URI（验证签名）
+- `JWT_AUDIENCE`：期望受众。`aud` 包含该值，或 `azp` 等于该值，才会通过
+
+签名之外还会校验 `iss`，以及 `aud` / `azp`。未认证返回 E40101；令牌里没有租户返回 E40102。
+
+JWT token 必须包含以下 claims：
+
+- `sub`：用户 ID（必填）
+- `tenant_id`（可配置）：租户 ID，**必填**
+- `aud` 或 `azp`：必须匹配 `JWT_AUDIENCE`
+- `roles` 或 `realm_access.roles`（可配置）：用户角色列表
+- `groups`（可配置）：用户组列表
+
+#### 开发环境（Header 认证）
+
+⚠️ **警告**：`dev` / `local` profile 不安全，只用于本机开发。
+
+用环境变量 `SPRING_PROFILES_ACTIVE=dev`（或 `local`）激活，不要把 `spring.profiles.active` 写进 `application-dev.yml`。下列情况会在启动时直接失败：
+
+- `dev`/`local` 与 `prod`/`production` 同时激活
+- `dev`/`local` 的数据源不是本机（localhost、127.0.0.1、::1 或内嵌 H2）
+
+请求头：
+
+- `X-Tenant-Id`：租户 ID（必填）
+- `X-User-Id`：用户 ID（必填）
+- `X-Roles`：角色列表（逗号分隔，可选）
+- `X-Groups`：用户组列表（逗号分隔，可选）
+
+`prod` 和未指定 profile 的默认启动都不会加载 `DevTenantContext`。
+
+### 切换到 OpenAI GPT-4o
+
+修改 `application.yml`：
+
+```yaml
+spring:
+  ai:
+    openai:
+      base-url: https://api.openai.com/v1
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          model: gpt-4o
+```
+
+## 🔄 持续集成（CI）
+
+本项目使用 GitHub Actions 进行持续集成，确保代码质量和测试覆盖。
+
+### CI 流程
+
+- **触发条件**：
+  - Pull Request 到 `main` 分支
+  - 直接推送到 `main` 分支
+
+- **执行步骤**：
+  - 运行在 `ubuntu-24.04`
+  - JDK 17 (Temurin) 环境配置
+  - Maven 依赖缓存（加速构建）
+  - 单个 `mvn -B verify`：单元测试（Surefire）和集成测试（Failsafe，含 `*IT`）
+  - 上传测试报告 artifacts
+  - 生成测试结果摘要
+  - 另有 Docker job：构建镜像并用 `docker compose up -d --wait` 检查服务健康
+
+- **API Key 安全性**：CI 环境使用假的 API Key（`ci-dummy-key-not-real`），不会调用真实的百炼/DashScope API。测试配置（`application-test.yml`）会将 API 端点指向不可达地址，确保测试不依赖外部服务。
+
+- **并发控制**：同一分支的新提交会自动取消旧的 CI 运行，节省资源。
+
+### 查看 CI 结果
+
+1. 访问 Pull Request 页面查看 "Checks" 选项卡
+2. 点击 "Details" 查看详细的测试日志
+3. 下载测试报告 artifacts 进行离线分析
+
+## 🤝 贡献指南
+
+欢迎提交 Issue 和 Pull Request！
+
+## 📄 许可证
+
+MIT License
+
+## 📧 联系方式
+
+- 项目作者：[您的名字]
+- 邮箱：[您的邮箱]
+- GitHub：[您的 GitHub]
+
+---
+
+**⭐ 如果这个项目对你有帮助，请给一个 Star！**

@@ -1,6 +1,7 @@
 services:
   # ============================================
   # PostgreSQL 16 with pgvector
+  # healthcheck 等字段属于 postgres 服务，不要写到 networks 下面。
   # ============================================
   postgres:
     image: pgvector/pgvector:0.8.6-pg16
@@ -37,7 +38,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,21 +80,24 @@ services:
     image: quay.io/keycloak/keycloak:26.8
     container_name: analyzer-keycloak
     restart: unless-stopped
+    entrypoint: ["bash", "/opt/keycloak/import-realm.sh"]
+    command: ["start-dev", "--import-realm"]
     environment:
       # Keycloak 26：KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD 已弃用
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD}
-      # 完整前端 URL。token iss = ${KC_HOSTNAME}/realms/master，与浏览器走 8180 时一致。
+      # 完整前端 URL。token iss = ${KC_HOSTNAME}/realms/analyzer。
       KC_HOSTNAME: ${KC_HOSTNAME}
-      # 应用容器用 http://keycloak:8080 做后端调用时，不改写 iss。
+      # 应用容器用 http://keycloak:8080 拉 JWK 时，不改写 iss。
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
-    command: start-dev
     ports:
       - "127.0.0.1:8180:8080"
     volumes:
       - keycloak-data:/opt/keycloak/data
+      - ./docker/keycloak/analyzer-realm.json:/opt/keycloak/analyzer-realm.json:ro
+      - ./docker/keycloak/import-realm.sh:/opt/keycloak/import-realm.sh:ro
     # 镜像没有 curl。Keycloak 25+ 的 /health/ready 在管理端口 9000，不在 8080。
     healthcheck:
       test:
@@ -117,23 +121,17 @@ services:
     restart: unless-stopped
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      # AIConfig 与 Spring AI 自动配置都声明了 chatClientBuilder。测试里同样打开了这项。
-      SPRING_MAIN_ALLOW_BEAN_DEFINITION_OVERRIDING: "true"
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
-      # prod 读取 app.security.jwt.*。iss 必须等于 KC_HOSTNAME/realms/master。
+      # prod 读取 app.security.jwt.*。iss 必须等于 ${KC_HOSTNAME}/realms/analyzer。
       JWT_ISSUER_URI: ${JWT_ISSUER_URI}
       # 应用容器访问不到宿主机的 localhost:8180，走 compose DNS。
       JWT_JWK_SET_URI: ${JWT_JWK_SET_URI}
-      # aud 包含该值，或 azp 等于该值。应对齐 Keycloak 客户端 ID。
+      # aud 包含该值，或 azp 等于该值。对齐 realm 里的客户端 ID。
       JWT_AUDIENCE: ${JWT_AUDIENCE}
-      # PostgreSQL 连接（暂时注释，Stage 2 会用到）
-      # SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
-      # SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
-      # SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      # Redis 连接（暂时注释，Stage 4 会用到）
-      # SPRING_REDIS_HOST: redis
-      # SPRING_REDIS_PORT: 6379
-      # SPRING_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # 容器内主机名是服务名 postgres。宿主机 IDE 用 .env 里的 localhost URL。
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:
@@ -141,8 +139,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      # minio:
-      #   condition: service_healthy
       keycloak:
         condition: service_healthy
     # 运行镜像是 Alpine JRE，使用已有的 /api/health，不额外安装 curl。
@@ -163,8 +159,6 @@ volumes:
     name: analyzer-postgres-data
   redis-data:
     name: analyzer-redis-data
-  # minio-data:
-  #   name: analyzer-minio-data
   keycloak-data:
     name: analyzer-keycloak-data
 
