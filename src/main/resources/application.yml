@@ -73,6 +73,20 @@ app:
     embedding-model: text-embedding-v4
     embedding-dimensions: 1024
     hnsw-ef-search: 100
+    # 只在 rerank.enabled=true 时作为向量召回条数。关闭时检索仍使用 top-k。
+    recall-top-n: 20
+    rerank:
+      enabled: false
+      provider: dashscope
+      model: qwen3-rerank
+      timeout-ms: 800
+      min-score: 0.3
+      # 原生 text-rerank：https://{workspace-id}.{region}.{domain}/api/v1/services/rerank/text-rerank/text-rerank
+      # 密钥复用 spring.ai.openai.api-key（DASHSCOPE_API_KEY），不要在这里写密钥。
+      domain: maas.aliyuncs.com
+      region: cn-beijing
+      workspace-id: ${DASHSCOPE_WORKSPACE_ID:}
+      base-url: ${RAG_RERANK_BASE_URL:}
   
   # JWT 资源服务器。留空时非 dev/local 启动失败。
   # 不要把这些值写进 spring.security.oauth2.resourceserver.jwt.*：
