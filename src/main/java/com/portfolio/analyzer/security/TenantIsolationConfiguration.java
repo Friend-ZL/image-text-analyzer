@@ -1,6 +1,5 @@
 package com.portfolio.analyzer.security;
 
-import com.zaxxer.hikari.HikariDataSource;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.config.BeanPostProcessor;
@@ -30,8 +29,8 @@ public class TenantIsolationConfiguration {
         return new BeanPostProcessor() {
             @Override
             public Object postProcessAfterInitialization(Object bean, String beanName) {
-                if (bean instanceof HikariDataSource hikari && !(bean instanceof TenantGuardingDataSource)) {
-                    return new TenantGuardingDataSource(hikari);
+                if (bean instanceof DataSource dataSource && !(bean instanceof TenantGuardingDataSource)) {
+                    return new TenantGuardingDataSource(dataSource);
                 }
                 return bean;
             }
