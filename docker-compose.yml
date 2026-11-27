@@ -129,9 +129,15 @@ services:
       # aud 包含该值，或 azp 等于该值。对齐 realm 里的客户端 ID。
       JWT_AUDIENCE: ${JWT_AUDIENCE}
       # 容器内主机名是服务名 postgres。宿主机 IDE 用 .env 里的 localhost URL。
+      # 应用账号是 app_rw。Flyway 用 POSTGRES_* 对应的 owner。角色和密码由 V3 迁移创建，不要再写 init 脚本抢 CREATE ROLE。
       DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       DATABASE_USERNAME: ${DATABASE_USERNAME}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_FLYWAY_USERNAME: ${DATABASE_FLYWAY_USERNAME}
+      DATABASE_FLYWAY_PASSWORD: ${DATABASE_FLYWAY_PASSWORD}
+      DATABASE_APP_RW_PASSWORD: ${DATABASE_APP_RW_PASSWORD}
+      JWT_CLIENT_ID: ${JWT_CLIENT_ID:-image-text-analyzer}
+      JWT_CLOCK_SKEW_SECONDS: ${JWT_CLOCK_SKEW_SECONDS:-60s}
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

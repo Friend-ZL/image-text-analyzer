@@ -115,7 +115,7 @@ class VectorStoreBehaviorIT extends AbstractPgVectorIT {
         assertThat(content(tenantA.tenantId(), docId)).isEqualTo("alpha");
         assertThat(countChunks(tenantA.tenantId(), docId)).isEqualTo(1);
         assertThat(countChunks(tenantB.tenantId(), docId)).isZero();
-        Integer rowsForDoc = jdbcTemplate.queryForObject(
+        Integer rowsForDoc = ownerJdbc().queryForObject(
                 "SELECT COUNT(*) FROM chunk WHERE doc_id = ?",
                 Integer.class,
                 docId
@@ -124,11 +124,11 @@ class VectorStoreBehaviorIT extends AbstractPgVectorIT {
     }
 
     private void insertDocument(UUID docId, TenantPrincipal principal) {
-        jdbcTemplate.update(
+        inTenant(principal.tenantId(), () -> jdbcTemplate.update(
                 "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
                         "VALUES (?, ?, ?, 'text-embedding-v4', 1024)",
                 docId, principal.tenantId(), principal.userId()
-        );
+        ));
     }
 
     private VectorStorePort.ChunkData chunk(UUID docId, int chunkIndex, String content) {
@@ -148,20 +148,20 @@ class VectorStoreBehaviorIT extends AbstractPgVectorIT {
     }
 
     private Integer countChunks(String tenantId, UUID docId) {
-        return jdbcTemplate.queryForObject(
+        return inTenant(tenantId, () -> jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chunk WHERE tenant_id = ? AND doc_id = ?",
                 Integer.class,
                 tenantId,
                 docId
-        );
+        ));
     }
 
     private String content(String tenantId, UUID docId) {
-        return jdbcTemplate.queryForObject(
+        return inTenant(tenantId, () -> jdbcTemplate.queryForObject(
                 "SELECT content FROM chunk WHERE tenant_id = ? AND doc_id = ? AND chunk_index = 0",
                 String.class,
                 tenantId,
                 docId
-        );
+        ));
     }
 }

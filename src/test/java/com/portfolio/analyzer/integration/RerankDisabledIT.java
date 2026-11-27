@@ -17,6 +17,8 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -55,12 +57,17 @@ class RerankDisabledIT {
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.username", () -> AbstractPgVectorIT.APP_RW_USER);
+        registry.add("spring.datasource.password", () -> AbstractPgVectorIT.APP_RW_PASSWORD);
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
         registry.add("spring.jpa.properties.hibernate.dialect",
                 () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.flyway.enabled", () -> "true");
+        registry.add("spring.flyway.url", postgres::getJdbcUrl);
+        registry.add("spring.flyway.user", postgres::getUsername);
+        registry.add("spring.flyway.password", postgres::getPassword);
+        registry.add("spring.flyway.placeholders.appRwPassword", () -> AbstractPgVectorIT.APP_RW_PASSWORD);
+        registry.add("DATABASE_APP_RW_PASSWORD", () -> AbstractPgVectorIT.APP_RW_PASSWORD);
         registry.add("spring.ai.openai.api-key", () -> "test-key");
         registry.add("app.rag.rerank.enabled", () -> "false");
         registry.add("app.rag.top-k", () -> "3");
@@ -177,6 +184,9 @@ class RerankDisabledIT {
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
     private TenantContext tenantContext;
 
     @Autowired
@@ -201,10 +211,11 @@ class RerankDisabledIT {
                 ingestionService.ingestDocument(owner, file, "rerank-off");
             }
 
-            Integer stored = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM chunk WHERE tenant_id = ?",
-                    Integer.class,
-                    owner.tenantId());
+            Integer stored = new TransactionTemplate(transactionManager).execute(status ->
+                    jdbcTemplate.queryForObject(
+                            "SELECT COUNT(*) FROM chunk WHERE tenant_id = ?",
+                            Integer.class,
+                            owner.tenantId()));
             assertThat(stored).isGreaterThan(ragConfig.getTopK());
             assertThat(ragConfig.getRerank().isEnabled()).isFalse();
 

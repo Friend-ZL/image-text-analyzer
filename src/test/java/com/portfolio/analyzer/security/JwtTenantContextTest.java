@@ -64,6 +64,42 @@ class JwtTenantContextTest {
     }
     
     @Test
+    void shouldReadResourceAccessRolesForConfiguredClientOnly() {
+        Jwt jwt = createJwt(Map.of(
+            "sub", "user1",
+            "tenant_id", "tenant1",
+            "resource_access", Map.of(
+                "image-text-analyzer", Map.of("roles", List.of("rag-user")),
+                "other-client", Map.of("roles", List.of("admin"))
+            )
+        ));
+        setupSecurityContext(jwt);
+
+        assertEquals(Set.of("rag-user"), jwtTenantContext.current().roles());
+
+        JwtTenantContext otherClient = new JwtTenantContext(claimProperties, "other-client");
+        assertEquals(Set.of("admin"), otherClient.current().roles());
+
+        JwtTenantContext unknownClient = new JwtTenantContext(claimProperties, "missing-client");
+        assertTrue(unknownClient.current().roles().isEmpty());
+    }
+
+    @Test
+    void shouldUnionResourceAccessRolesWithRealmRoles() {
+        Jwt jwt = createJwt(Map.of(
+            "sub", "user1",
+            "tenant_id", "tenant1",
+            "realm_access", Map.of("roles", List.of("realm-admin")),
+            "resource_access", Map.of(
+                "image-text-analyzer", Map.of("roles", List.of("rag-user"))
+            )
+        ));
+        setupSecurityContext(jwt);
+
+        assertEquals(Set.of("realm-admin", "rag-user"), jwtTenantContext.current().roles());
+    }
+
+    @Test
     void shouldMergeRolesFromMultipleClaims() {
         Jwt jwt = createJwt(Map.of(
             "sub", "user1",

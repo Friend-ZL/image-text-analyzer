@@ -5,6 +5,7 @@ import com.portfolio.analyzer.dto.DocumentChunk;
 import com.portfolio.analyzer.dto.DocumentPage;
 import com.portfolio.analyzer.repository.VectorStorePort;
 import com.portfolio.analyzer.security.TenantPrincipal;
+import com.portfolio.analyzer.security.TenantSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -38,6 +39,7 @@ public class DocumentIngestionService {
     private final DocumentExtractionService extractionService;
     private final DocumentChunkingService chunkingService;
     private final JdbcTemplate jdbcTemplate;
+    private final TenantSession tenantSession;
     
     public DocumentIngestionService(
             VectorStorePort vectorStore,
@@ -45,13 +47,15 @@ public class DocumentIngestionService {
             RagConfig ragConfig,
             DocumentExtractionService extractionService,
             DocumentChunkingService chunkingService,
-            JdbcTemplate jdbcTemplate) {
+            JdbcTemplate jdbcTemplate,
+            TenantSession tenantSession) {
         this.vectorStore = vectorStore;
         this.embeddingModel = embeddingModel;
         this.ragConfig = ragConfig;
         this.extractionService = extractionService;
         this.chunkingService = chunkingService;
         this.jdbcTemplate = jdbcTemplate;
+        this.tenantSession = tenantSession;
     }
     
     /**
@@ -71,6 +75,8 @@ public class DocumentIngestionService {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("文件不能为空");
         }
+        // 直写 document 发生在 VectorStorePort 之前，必须先设好本事务的租户。
+        tenantSession.apply(principal.tenantId());
         
         String documentId = UUID.randomUUID().toString();
         
@@ -182,6 +188,7 @@ public class DocumentIngestionService {
      */
     @Transactional
     public void deleteDocument(TenantPrincipal principal, String documentId) {
+        tenantSession.apply(principal.tenantId());
         // 删除chunks（通过VectorStorePort）
         vectorStore.deleteChunksByDocument(principal, UUID.fromString(documentId));
         

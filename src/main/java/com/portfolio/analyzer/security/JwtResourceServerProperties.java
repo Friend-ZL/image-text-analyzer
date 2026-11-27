@@ -1,7 +1,10 @@
 package com.portfolio.analyzer.security;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.convert.DurationStyle;
 import org.springframework.context.annotation.Configuration;
+
+import java.time.Duration;
 
 /**
  * 生产环境 JWT 资源服务器设置。
@@ -28,6 +31,17 @@ public class JwtResourceServerProperties {
      */
     private String audience = "";
 
+    /**
+     * Keycloak 客户端 ID。角色还从 {@code resource_access.<client-id>.roles} 读取。
+     * 对应 JWT_CLIENT_ID。不能含点，点分路径会把它拆开。
+     */
+    private String clientId = "image-text-analyzer";
+
+    /**
+     * 令牌时间校验的时钟偏差。对应 JWT_CLOCK_SKEW_SECONDS，默认 60 秒。
+     */
+    private Duration clockSkew = Duration.ofSeconds(60);
+
     public String getIssuer() {
         return issuer;
     }
@@ -50,5 +64,45 @@ public class JwtResourceServerProperties {
 
     public void setAudience(String audience) {
         this.audience = audience;
+    }
+
+    public String getClientId() {
+        return clientId;
+    }
+
+    public void setClientId(String clientId) {
+        if (clientId == null || clientId.isBlank()) {
+            throw new IllegalStateException("app.security.jwt.client-id must not be blank");
+        }
+        if (clientId.indexOf('.') >= 0) {
+            throw new IllegalStateException(
+                    "app.security.jwt.client-id must be a single path segment without '.'");
+        }
+        this.clientId = clientId.trim();
+    }
+
+    public Duration getClockSkew() {
+        return clockSkew;
+    }
+
+    public void setClockSkew(String raw) {
+        this.clockSkew = parseClockSkew(raw);
+    }
+
+    static Duration parseClockSkew(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalStateException("app.security.jwt.clock-skew must not be blank");
+        }
+        String trimmed = raw.trim();
+        Duration parsed;
+        if (trimmed.matches("-?\\d+")) {
+            parsed = Duration.ofSeconds(Long.parseLong(trimmed));
+        } else {
+            parsed = DurationStyle.detectAndParse(trimmed);
+        }
+        if (parsed.isNegative()) {
+            throw new IllegalStateException("app.security.jwt.clock-skew must not be negative");
+        }
+        return parsed;
     }
 }

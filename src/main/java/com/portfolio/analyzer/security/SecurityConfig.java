@@ -11,10 +11,13 @@ import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+
+import java.time.Duration;
 
 /**
  * Spring Security 配置。
@@ -90,11 +93,16 @@ public class SecurityConfig {
         return buildJwtDecoder(
                 properties.getJwkSetUri(),
                 properties.getIssuer(),
-                properties.getAudience()
+                properties.getAudience(),
+                properties.getClockSkew()
         );
     }
 
     static JwtDecoder buildJwtDecoder(String jwkSetUri, String issuer, String audience) {
+        return buildJwtDecoder(jwkSetUri, issuer, audience, Duration.ofSeconds(60));
+    }
+
+    static JwtDecoder buildJwtDecoder(String jwkSetUri, String issuer, String audience, Duration clockSkew) {
         if (issuer == null || issuer.isBlank()) {
             throw new IllegalStateException(
                     "JWT issuer is required outside dev/local profiles. Set JWT_ISSUER_URI.");
@@ -107,9 +115,14 @@ public class SecurityConfig {
             throw new IllegalStateException(
                     "JWT audience is required outside dev/local profiles. Set JWT_AUDIENCE.");
         }
+        if (clockSkew == null || clockSkew.isNegative()) {
+            throw new IllegalStateException("app.security.jwt.clock-skew must not be negative");
+        }
+        // 不用 JwtValidators.createDefaultWithIssuer：它自带 60 秒时间校验，会盖住配置的偏差。
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(jwkSetUri).build();
         OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
-                JwtValidators.createDefaultWithIssuer(issuer),
+                new JwtIssuerValidator(issuer),
+                new JwtTimestampValidator(clockSkew),
                 new AudienceOrAzpValidator(audience)
         );
         decoder.setJwtValidator(validator);

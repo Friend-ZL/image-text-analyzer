@@ -114,10 +114,15 @@ cd image-text-analyzer
 # AI 服务
 export DASHSCOPE_API_KEY="your-api-key-here"
 
-# 数据库
+# 数据库。应用账号是 app_rw，Flyway 用 owner。两组密码都没有默认值。
+# DATABASE_PASSWORD 与 DATABASE_APP_RW_PASSWORD 必须相同。
+# DATABASE_FLYWAY_* 必须是库的 owner（本地 compose 里等于 POSTGRES_USER / POSTGRES_PASSWORD）。
 export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_db"
-export DATABASE_USERNAME="analyzer"
-export DATABASE_PASSWORD="your-password"
+export DATABASE_USERNAME="app_rw"
+export DATABASE_PASSWORD="change_me"
+export DATABASE_FLYWAY_USERNAME="analyzer"
+export DATABASE_FLYWAY_PASSWORD="change_me"
+export DATABASE_APP_RW_PASSWORD="change_me"
 
 # JWT 认证（从 Keycloak 或其他 OIDC Provider 获取）
 # 默认 profile 会校验 iss，以及 aud 或 azp。任一未配置都会拒绝启动。
@@ -136,7 +141,13 @@ export DASHSCOPE_API_KEY="your-api-key-here"
 export SPRING_PROFILES_ACTIVE="dev"
 
 # 可选：本机数据库（远程 DATABASE_URL 会导致 dev/local 拒绝启动）
+# 连 Postgres 时应用账号仍是 app_rw，不要改回 owner。
 export DATABASE_URL="jdbc:postgresql://localhost:5432/analyzer_dev"
+export DATABASE_USERNAME="app_rw"
+export DATABASE_PASSWORD="change_me"
+export DATABASE_FLYWAY_USERNAME="analyzer"
+export DATABASE_FLYWAY_PASSWORD="change_me"
+export DATABASE_APP_RW_PASSWORD="change_me"
 export FLYWAY_ENABLED="false"
 ```
 
@@ -152,15 +163,15 @@ docker compose up -d postgres
 docker compose ps
 ```
 
-生产环境也可以手工建库。Flyway 会在应用启动时执行 V1（`vector` 扩展）和 V2（RAG 表）。默认库名是 `analyzer_db`。
+生产环境也可以手工建库。Flyway 以 owner 执行 V1（`vector` 扩展）、V2（RAG 表）和 V3（RLS + `app_rw`）。默认库名是 `analyzer_db`。应用不要用 owner 连接。
 
 ```bash
-# 创建数据库
+# 创建数据库和 Flyway owner。app_rw 不要在这里创建，V3 是唯一路径。
 psql -U postgres -c "CREATE DATABASE analyzer_db;"
-psql -U postgres -c "CREATE USER analyzer WITH PASSWORD 'your-password';"
+psql -U postgres -c "CREATE USER analyzer WITH PASSWORD 'change_me';"
 psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE analyzer_db TO analyzer;"
-
-# Flyway 会在应用启动时自动运行迁移
+# 启动应用后 V3 会 CREATE ROLE app_rw，并把 DATABASE_APP_RW_PASSWORD 设为它的密码。
+# V3 只跑一次。之后轮换 app_rw 密码需要 owner 执行 ALTER ROLE，不能只改环境变量。
 ```
 
 ### 4. 启动应用
@@ -207,7 +218,7 @@ docker compose up -d
 docker compose ps
 ```
 
-应用在容器里用 `prod` profile。数据源是 `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD`（容器内 URL 指向服务名 `postgres`，库名来自 `POSTGRES_DB`，默认 `analyzer_db`）。JWT 三个变量都要有值：
+应用在容器里用 `prod` profile。数据源是 `DATABASE_URL` / `DATABASE_USERNAME=app_rw` / `DATABASE_PASSWORD`，Flyway 是 `DATABASE_FLYWAY_USERNAME` / `DATABASE_FLYWAY_PASSWORD`（与 `POSTGRES_USER` / `POSTGRES_PASSWORD` 相同）。`DATABASE_APP_RW_PASSWORD` 必须与 `DATABASE_PASSWORD` 相同，由 V3 写入角色。容器内 URL 指向服务名 `postgres`，库名来自 `POSTGRES_DB`，默认 `analyzer_db`。非 dev 如果应用用户名等于 Flyway 用户，启动失败。JWT 三个变量都要有值，`JWT_CLIENT_ID` 和 `JWT_CLOCK_SKEW_SECONDS` 可选：
 
 | 变量 | 默认值 | 作用 |
 |------|--------|------|
@@ -215,6 +226,8 @@ docker compose ps
 | `JWT_ISSUER_URI` | `http://localhost:8180/realms/analyzer` | 必须与 token 的 `iss` 一致 |
 | `JWT_JWK_SET_URI` | `http://keycloak:8080/realms/analyzer/protocol/openid-connect/certs` | 应用容器拉取公钥 |
 | `JWT_AUDIENCE` | `image-text-analyzer` | `aud` 包含该值，或 `azp` 等于该值 |
+| `JWT_CLIENT_ID` | `image-text-analyzer` | 额外读取 `resource_access.<client>.roles` |
+| `JWT_CLOCK_SKEW_SECONDS` | `60s` | 时钟偏差，纯数字按秒，负数拒绝启动 |
 
 启动时导入 realm `analyzer`，里面有客户端 `image-text-analyzer`。`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`，所以 iss 仍是宿主机地址，JWK 可以走服务名。
 
@@ -723,8 +736,8 @@ spring:
   # 数据源配置
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/analyzer_db}
-    username: ${DATABASE_USERNAME:analyzer}
-    password: ${DATABASE_PASSWORD:analyzer}
+    username: ${DATABASE_USERNAME:app_rw}
+    password: ${DATABASE_PASSWORD:}
   
   # JPA 配置（由 Flyway 管理 schema）
   jpa:
@@ -734,6 +747,10 @@ spring:
   # Flyway 数据库迁移
   flyway:
     enabled: true
+    user: ${DATABASE_FLYWAY_USERNAME:analyzer}
+    password: ${DATABASE_FLYWAY_PASSWORD:}
+    placeholders:
+      appRwPassword: ${DATABASE_APP_RW_PASSWORD:}
     baseline-on-migrate: true
   
   # Spring AI
@@ -770,6 +787,8 @@ app:
       issuer: ${JWT_ISSUER_URI:}
       jwk-set-uri: ${JWT_JWK_SET_URI:}
       audience: ${JWT_AUDIENCE:}
+      client-id: ${JWT_CLIENT_ID:image-text-analyzer}
+      clock-skew: ${JWT_CLOCK_SKEW_SECONDS:60s}
       claims:
         tenant-id: tenant_id              # 租户 ID claim 名称
         roles:                             # 角色 claim 名称列表
@@ -797,6 +816,7 @@ JWT token 必须包含以下 claims：
 - `tenant_id`（可配置）：租户 ID，**必填**
 - `aud` 或 `azp`：必须匹配 `JWT_AUDIENCE`
 - `roles` 或 `realm_access.roles`（可配置）：用户角色列表
+- `resource_access.<JWT_CLIENT_ID>.roles`：客户端角色，与上面的路径取并集
 - `groups`（可配置）：用户组列表
 
 #### 开发环境（Header 认证）

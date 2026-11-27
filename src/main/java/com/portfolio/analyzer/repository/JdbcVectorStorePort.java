@@ -4,6 +4,7 @@ import com.portfolio.analyzer.common.ErrorCode;
 import com.portfolio.analyzer.config.RagConfig;
 import com.portfolio.analyzer.exception.BusinessException;
 import com.portfolio.analyzer.security.TenantPrincipal;
+import com.portfolio.analyzer.security.TenantSession;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.flyway.FlywayMigrationInitializer;
@@ -31,7 +32,7 @@ import java.util.UUID;
  * <p><strong>安全实现：</strong>
  * <ul>
  *   <li>所有SQL WHERE子句显式过滤 tenant_id 和 ACL</li>
- *   <li>使用 @Transactional，后续可添加 SET LOCAL app.tenant_id</li>
+ *   <li>使用 @Transactional，事务开始时由 {@link TenantSession} 设置 app.tenant_id</li>
  *   <li>检查pgvector版本，配置HNSW参数优化过滤查询</li>
  * </ul>
  * 
@@ -44,10 +45,11 @@ public class JdbcVectorStorePort implements VectorStorePort {
     
     private final JdbcTemplate jdbcTemplate;
     private final RagConfig ragConfig;
+    private final TenantSession tenantSession;
     private final boolean supportsIterativeScan;
     
     public JdbcVectorStorePort(JdbcTemplate jdbcTemplate, RagConfig ragConfig) {
-        this(jdbcTemplate, ragConfig, null);
+        this(jdbcTemplate, ragConfig, null, null);
     }
 
     /**
@@ -57,9 +59,11 @@ public class JdbcVectorStorePort implements VectorStorePort {
     @Autowired
     public JdbcVectorStorePort(JdbcTemplate jdbcTemplate,
                                RagConfig ragConfig,
-                               ObjectProvider<FlywayMigrationInitializer> flywayMigration) {
+                               ObjectProvider<FlywayMigrationInitializer> flywayMigration,
+                               TenantSession tenantSession) {
         this.jdbcTemplate = jdbcTemplate;
         this.ragConfig = ragConfig;
+        this.tenantSession = tenantSession;
         if (flywayMigration != null) {
             flywayMigration.ifAvailable(initializer ->
                     logger.debug("Flyway migrations applied before pgvector version check"));
@@ -104,7 +108,6 @@ public class JdbcVectorStorePort implements VectorStorePort {
             int topK,
             double similarityThreshold) {
         
-        // Set tenant context for RLS (empty hook for now, will use set_config in V3)
         setTenantContext(principal.tenantId());
         
         // Configure HNSW parameters using set_config (transaction-local)
@@ -153,7 +156,6 @@ public class JdbcVectorStorePort implements VectorStorePort {
             return 0;
         }
         
-        // Set tenant context for RLS (empty hook for now, will use set_config in V3)
         setTenantContext(principal.tenantId());
         
         String sql = """
@@ -267,24 +269,15 @@ public class JdbcVectorStorePort implements VectorStorePort {
     }
     
     /**
-     * 设置租户上下文（用于RLS）
-     * 
-     * <p>Empty hook for now. Backend will use this in V3 with RLS policies:
-     * <pre>
-     * SELECT set_config('app.tenant_id', ?, true)
-     * </pre>
-     * 
-     * <p>The set_config call must occur in the same transaction as the query,
-     * so this method relies on @Transactional being effective (no self-invocation).
-     * 
-     * @param tenantId tenant ID to set in transaction-local config
+     * 与 {@link TenantSession} 使用同一条 {@code set_config}。重复设置是幂等的。
+     * 显式 {@code WHERE tenant_id = ?} 仍然保留。
      */
     private void setTenantContext(String tenantId) {
-        // TODO (V3): Uncomment when RLS policies are added
-        // jdbcTemplate.queryForObject("SELECT set_config('app.tenant_id', ?, true)", String.class, tenantId);
-        
-        // For now, explicit WHERE tenant_id=? provides defense in depth
-        logger.trace("Tenant context: {} (RLS policies will be added in V3)", tenantId);
+        if (tenantSession == null) {
+            logger.trace("Tenant context {} (TenantSession not wired)", tenantId);
+            return;
+        }
+        tenantSession.apply(tenantId);
     }
     
     /**

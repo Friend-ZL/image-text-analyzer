@@ -2,7 +2,6 @@ package com.portfolio.analyzer.integration;
 
 import com.portfolio.analyzer.ai.MultimodalAIClient;
 import com.portfolio.analyzer.config.RagConfig;
-import org.flywaydb.core.api.callback.Callback;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -27,11 +26,6 @@ public class ItStubsConfig {
     @Bean
     static BeanPostProcessor hnswIterativeScanProbe() {
         return new HnswIterativeScanProbe();
-    }
-
-    @Bean
-    Callback appRwGrantsAfterFlyway() {
-        return AppRwRoleBootstrap.callback();
     }
 
     /**

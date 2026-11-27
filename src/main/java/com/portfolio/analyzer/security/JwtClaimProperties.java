@@ -20,8 +20,9 @@ public class JwtClaimProperties {
     private String tenantId = "tenant_id";
     
     /**
-     * 角色 claim 名称列表（兼容 Keycloak 的多层结构）
-     * 默认：realm_access.roles 和 resource_access.<client>.roles
+     * 固定角色路径，取并集。
+     * {@code resource_access.<client-id>.roles} 不写在这里，client-id 来自
+     * {@code app.security.jwt.client-id}，由 {@link JwtTenantContext} 追加。
      */
     private List<String> roles = List.of(
         "realm_access.roles",

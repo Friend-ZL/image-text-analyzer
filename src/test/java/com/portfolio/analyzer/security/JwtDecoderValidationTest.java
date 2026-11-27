@@ -18,6 +18,7 @@ import org.springframework.security.oauth2.jwt.JwtException;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Date;
 
@@ -33,6 +34,7 @@ class JwtDecoderValidationTest {
     private HttpServer server;
     private RSAKey rsaKey;
     private JwtDecoder decoder;
+    private String jwkSetUri;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -46,7 +48,7 @@ class JwtDecoderValidationTest {
             exchange.close();
         });
         server.start();
-        String jwkSetUri = "http://127.0.0.1:" + server.getAddress().getPort() + "/jwks";
+        jwkSetUri = "http://127.0.0.1:" + server.getAddress().getPort() + "/jwks";
         decoder = SecurityConfig.buildJwtDecoder(jwkSetUri, ISSUER, AUDIENCE);
     }
 
@@ -95,6 +97,48 @@ class JwtDecoderValidationTest {
     }
 
     @Test
+    void rejectsTokenExpiredBeyondDefaultClockSkew() throws Exception {
+        Instant now = Instant.now();
+        assertThrows(JwtException.class, () -> decoder.decode(
+                signAt(ISSUER, AUDIENCE, null, now.minusSeconds(300), now.minusSeconds(120), null)));
+    }
+
+    @Test
+    void acceptsTokenExpiredWithinDefaultClockSkew() throws Exception {
+        Instant now = Instant.now();
+        decoder.decode(signAt(ISSUER, AUDIENCE, null, now.minusSeconds(120), now.minusSeconds(30), null));
+    }
+
+    @Test
+    void rejectsNotBeforeBeyondDefaultClockSkew() throws Exception {
+        Instant now = Instant.now();
+        assertThrows(JwtException.class, () -> decoder.decode(
+                signAt(ISSUER, AUDIENCE, null, now, now.plusSeconds(300), now.plusSeconds(120))));
+    }
+
+    @Test
+    void acceptsNotBeforeWithinDefaultClockSkew() throws Exception {
+        Instant now = Instant.now();
+        decoder.decode(signAt(ISSUER, AUDIENCE, null, now, now.plusSeconds(300), now.plusSeconds(30)));
+    }
+
+    @Test
+    void configuredClockSkewOverridesTheDefault() throws Exception {
+        JwtDecoder strict = SecurityConfig.buildJwtDecoder(jwkSetUri, ISSUER, AUDIENCE, Duration.ZERO);
+        Instant now = Instant.now();
+        String recentlyExpired = signAt(ISSUER, AUDIENCE, null, now.minusSeconds(30), now.minusSeconds(5), null);
+        assertThrows(JwtException.class, () -> strict.decode(recentlyExpired));
+        decoder.decode(recentlyExpired);
+    }
+
+    @Test
+    void negativeClockSkewFailsFast() {
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () ->
+                SecurityConfig.buildJwtDecoder(jwkSetUri, ISSUER, AUDIENCE, Duration.ofSeconds(-1)));
+        assertTrue(ex.getMessage().contains("clock-skew"));
+    }
+
+    @Test
     void failsFastWhenAudienceMissing() {
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> SecurityConfig.buildJwtDecoder("https://issuer.example/jwks", ISSUER, ""));
@@ -103,11 +147,19 @@ class JwtDecoderValidationTest {
 
     private String sign(String issuer, String audience, String azp) throws Exception {
         Instant now = Instant.now();
+        return signAt(issuer, audience, azp, now.minusSeconds(30), now.plusSeconds(300), null);
+    }
+
+    private String signAt(String issuer, String audience, String azp,
+                          Instant issuedAt, Instant expiresAt, Instant notBefore) throws Exception {
         JWTClaimsSet.Builder claims = new JWTClaimsSet.Builder()
                 .issuer(issuer)
                 .subject("user-1")
-                .issueTime(Date.from(now.minusSeconds(30)))
-                .expirationTime(Date.from(now.plusSeconds(300)));
+                .issueTime(Date.from(issuedAt))
+                .expirationTime(Date.from(expiresAt));
+        if (notBefore != null) {
+            claims.notBeforeTime(Date.from(notBefore));
+        }
         if (audience != null) {
             claims.audience(audience);
         }

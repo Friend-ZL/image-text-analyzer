@@ -62,12 +62,12 @@ class RagHttpIT extends AbstractPgVectorIT {
         assertThat(sources.isArray()).isTrue();
         assertThat(sources.size()).isPositive();
 
-        List<Map<String, Object>> chunks = jdbcTemplate.queryForList(
+        List<Map<String, Object>> chunks = inTenant("tenant-pdf", () -> jdbcTemplate.queryForList(
                 "SELECT page_no, content, metadata->>'file_name' AS file_name " +
                         "FROM chunk WHERE tenant_id = ? AND doc_id = ?",
                 "tenant-pdf",
                 UUID.fromString(documentId)
-        );
+        ));
         assertThat(chunks).isNotEmpty();
 
         for (JsonNode source : sources) {

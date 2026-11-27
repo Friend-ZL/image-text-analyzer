@@ -4,6 +4,7 @@ import com.portfolio.analyzer.integration.AbstractPgVectorIT;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -17,10 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Flyway 迁移集成测试
+ * Flyway 迁移集成测试。
  * <p>
- * 使用 Testcontainers pgvector/pgvector:pg16 镜像测试 Flyway 迁移。
- * CI 环境（CI=true）必须有 Docker，否则测试失败。
+ * 与其他 pgvector IT 共用一个容器。Flyway 用 owner，应用连接是 V3 创建的 app_rw。
  */
 class FlywayMigrationIT extends AbstractPgVectorIT {
 
@@ -75,7 +75,7 @@ class FlywayMigrationIT extends AbstractPgVectorIT {
     }
 
     /**
-     * V1 只记录基线迁移本身。后续 PR（#2 起）可以追加 V2+ 表，本测试不禁止那些表存在。
+     * V1 只记录基线迁移本身。后续迁移可以追加表，本测试不禁止那些表存在。
      */
     @Test
     void baselineHistoryRecordsSuccessfulV1() throws Exception {
@@ -113,7 +113,7 @@ class FlywayMigrationIT extends AbstractPgVectorIT {
                      WHERE r.rolname = current_user
                      """)) {
             assertTrue(rs.next());
-            assertEquals("app_rw", rs.getString("login_role"));
+            assertEquals(APP_RW_USER, rs.getString("login_role"));
             assertFalse(rs.getBoolean("rolsuper"));
             assertFalse(rs.getBoolean("rolbypassrls"));
             assertTrue(rs.getBoolean("rolcanlogin"));
@@ -126,7 +126,8 @@ class FlywayMigrationIT extends AbstractPgVectorIT {
                      SELECT pg_get_userbyid(relowner) AS owner,
                             has_table_privilege(current_user, 'chunk', 'SELECT') AS can_select,
                             has_table_privilege(current_user, 'chunk', 'INSERT') AS can_insert,
-                            has_table_privilege(current_user, 'chunk', 'TRUNCATE') AS can_truncate
+                            has_table_privilege(current_user, 'chunk', 'TRUNCATE') AS can_truncate,
+                            has_table_privilege(current_user, 'document', 'TRUNCATE') AS document_truncate
                      FROM pg_class
                      WHERE relname = 'chunk'
                      """)) {
@@ -134,7 +135,47 @@ class FlywayMigrationIT extends AbstractPgVectorIT {
             assertNotEquals("app_rw", rs.getString("owner"));
             assertTrue(rs.getBoolean("can_select"));
             assertTrue(rs.getBoolean("can_insert"));
-            assertTrue(rs.getBoolean("can_truncate"));
+            assertFalse(rs.getBoolean("can_truncate"));
+            assertFalse(rs.getBoolean("document_truncate"));
         }
+    }
+
+    @Test
+    void v3EnablesForcedRlsAndNonBypassRole() {
+        JdbcTemplate app = new JdbcTemplate(dataSource);
+
+        Integer v3 = app.queryForObject(
+                "SELECT COUNT(*) FROM flyway_schema_history WHERE version = '3' AND success",
+                Integer.class);
+        assertEquals(1, v3);
+
+        var tables = app.queryForList(
+                "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity, "
+                        + "pg_get_userbyid(c.relowner) AS owner "
+                        + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        + "WHERE n.nspname = 'public' AND c.relname IN ('document', 'chunk') "
+                        + "ORDER BY c.relname");
+        assertEquals(2, tables.size());
+        for (var row : tables) {
+            assertEquals(Boolean.TRUE, row.get("relrowsecurity"), row.get("relname").toString());
+            assertEquals(Boolean.TRUE, row.get("relforcerowsecurity"), row.get("relname").toString());
+            assertNotEquals("app_rw", row.get("owner"));
+        }
+
+        var policies = app.queryForList(
+                "SELECT tablename, policyname, qual, with_check FROM pg_policies "
+                        + "WHERE schemaname = 'public' AND tablename IN ('document', 'chunk')");
+        assertEquals(2, policies.size());
+        for (var row : policies) {
+            String qual = String.valueOf(row.get("qual"));
+            String check = String.valueOf(row.get("with_check"));
+            assertTrue(qual.contains("app.tenant_id"), qual);
+            assertTrue(check.contains("app.tenant_id"), check);
+        }
+
+        var role = app.queryForMap(
+                "SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = 'app_rw'");
+        assertEquals(Boolean.FALSE, role.get("rolbypassrls"));
+        assertEquals(Boolean.FALSE, role.get("rolsuper"));
     }
 }

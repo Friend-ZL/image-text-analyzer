@@ -118,44 +118,44 @@ class RagEndToEndIT extends AbstractPgVectorIT {
         assertThat(vectorExists).isTrue();
 
         UUID docId = UUID.randomUUID();
-        jdbcTemplate.update(
+        inTenant("tenant-a", () -> jdbcTemplate.update(
                 "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
                         "VALUES (?, 'tenant-a', 'user-a', 'text-embedding-v4', 1024)",
                 docId
-        );
+        ));
 
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        assertThatThrownBy(() -> inTenant("tenant-a", () -> jdbcTemplate.update(
                 "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
                         "VALUES (?, NULL, 'user-a', 'text-embedding-v4', 1024)",
                 UUID.randomUUID()
-        )).isInstanceOf(DataAccessException.class);
+        ))).isInstanceOf(DataAccessException.class);
 
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        assertThatThrownBy(() -> inTenant("tenant-a", () -> jdbcTemplate.update(
                 "INSERT INTO document (document_id, tenant_id, embedding_model, embedding_dim) " +
                         "VALUES (?, 'tenant-a', 'text-embedding-v4', 1024)",
                 UUID.randomUUID()
-        )).isInstanceOf(DataAccessException.class);
+        ))).isInstanceOf(DataAccessException.class);
 
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        assertThatThrownBy(() -> inTenant("tenant-a", () -> jdbcTemplate.update(
                 "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
                         "VALUES (?, 'tenant-a', 'user-a', 'text-embedding-v4', 512)",
                 UUID.randomUUID()
-        )).isInstanceOf(DataAccessException.class);
+        ))).isInstanceOf(DataAccessException.class);
 
         String vector = zeroVector(1024);
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        assertThatThrownBy(() -> inTenant("tenant-a", () -> jdbcTemplate.update(
                 "INSERT INTO chunk (tenant_id, doc_id, chunk_index, source_type, owner_user_id, " +
                         "embedding_model, embedding_dim, content, embedding) " +
                         "VALUES ('tenant-a', ?, 0, 'x', 'user-a', 'text-embedding-v4', 1024, 'content', ?::vector)",
                 docId, vector
-        )).isInstanceOf(DataAccessException.class);
+        ))).isInstanceOf(DataAccessException.class);
 
-        assertThatThrownBy(() -> jdbcTemplate.update(
+        assertThatThrownBy(() -> inTenant("tenant-b", () -> jdbcTemplate.update(
                 "INSERT INTO chunk (tenant_id, doc_id, chunk_index, source_type, owner_user_id, " +
                         "embedding_model, embedding_dim, content, embedding) " +
                         "VALUES ('tenant-b', ?, 0, 'text', 'user-b', 'text-embedding-v4', 1024, 'content', ?::vector)",
                 docId, vector
-        )).isInstanceOf(DataAccessException.class);
+        ))).isInstanceOf(DataAccessException.class);
     }
 
     private static String indexDef(List<Map<String, Object>> indexes, String name) {
@@ -249,15 +249,15 @@ class RagEndToEndIT extends AbstractPgVectorIT {
         assertThat(source.getPageNumber()).isNotNull();
         assertThat(source.getFileName()).isEqualTo("pages.txt");
 
-        Integer chunkCount = jdbcTemplate.queryForObject(
+        Integer chunkCount = inTenant("tenant-y", () -> jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chunk WHERE tenant_id = 'tenant-y'",
                 Integer.class
-        );
+        ));
         assertThat(chunkCount).isGreaterThan(0);
 
-        Map<String, Object> row = jdbcTemplate.queryForMap(
+        Map<String, Object> row = inTenant("tenant-y", () -> jdbcTemplate.queryForMap(
                 "SELECT page_no, source_type, embedding_model, embedding_dim FROM chunk WHERE tenant_id = 'tenant-y' LIMIT 1"
-        );
+        ));
         assertThat(row.get("page_no")).isNotNull();
         assertThat(row.get("source_type")).isIn("text", "vlm_ocr", "image_desc");
         assertThat(row.get("embedding_model")).isEqualTo("text-embedding-v4");
@@ -313,11 +313,11 @@ class RagEndToEndIT extends AbstractPgVectorIT {
     void shouldRejectWrongDimensionVector() {
         TenantPrincipal principal = new TenantPrincipal("tenant-reject", "user-reject", Set.of(), Set.of());
         UUID docId = UUID.randomUUID();
-        jdbcTemplate.update(
+        inTenant(principal.tenantId(), () -> jdbcTemplate.update(
                 "INSERT INTO document (document_id, tenant_id, owner_user_id, embedding_model, embedding_dim) " +
                         "VALUES (?, ?, ?, 'text-embedding-v4', 1024)",
                 docId, principal.tenantId(), principal.userId()
-        );
+        ));
 
         float[] wrongDimEmbedding = new float[512];
         for (int i = 0; i < 512; i++) {
@@ -373,14 +373,14 @@ class RagEndToEndIT extends AbstractPgVectorIT {
         );
         ingestionService.ingestDocument(principalB, file2, "few-source");
 
-        int manyCount = jdbcTemplate.queryForObject(
+        int manyCount = inTenant("tenant-many", () -> jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chunk WHERE tenant_id = 'tenant-many'",
                 Integer.class
-        );
-        int matchingCount = jdbcTemplate.queryForObject(
+        ));
+        int matchingCount = inTenant("tenant-few", () -> jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chunk WHERE tenant_id = 'tenant-few'",
                 Integer.class
-        );
+        ));
         assertThat(manyCount).isGreaterThan(ragConfig.getTopK());
         assertThat(matchingCount).isPositive().isLessThan(ragConfig.getTopK());
 
